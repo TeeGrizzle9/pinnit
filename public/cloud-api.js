@@ -50,6 +50,15 @@
       const s = sessionOf(); authCbs.forEach(cb => setTimeout(() => cb('SIGNED_IN', s), 0));
       return s;
     },
+    // recovery codes: save one from the profile, enter it on another phone to move the account there
+    async recover(code) {
+      const r = await req('POST', '/recover', { code });
+      token = r.token; uid = r.id; set(TOKEN, token); set(UID, uid);
+      const s = sessionOf(); authCbs.forEach(cb => setTimeout(() => cb('SIGNED_IN', s), 0));
+      return s;
+    },
+    async makeRecoveryCode() { return (await req('POST', '/me/recovery')).code; },
+    async recoveryStatus() { return (await req('GET', '/me/recovery')).saved; },
     async signUp() { throw new Error('Use the Get started screen'); },
     async signIn() { throw new Error('Use the Get started screen'); },
     // "Delete my Pinnit": removes the account and everything it made

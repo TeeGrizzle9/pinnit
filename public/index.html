@@ -314,6 +314,14 @@ textarea.field{height:92px;padding:12px 14px;resize:none;line-height:1.4}
 .stat b{display:block;font-size:22px;font-weight:700}
 .stat span{font-size:12px;color:var(--muted)}
 .invite{background:var(--ink);color:#fff;border-radius:18px;padding:18px;margin-top:18px}
+/* save my account */
+.save-acc{border:2px solid var(--sun);background:var(--sun-soft);border-radius:18px;padding:14px 16px;margin-top:14px}
+.save-acc.done{border-color:var(--line);background:var(--mint)}
+.save-acc b{display:block;font-size:16px}
+.save-acc p{margin:4px 0 10px;font-size:13px;line-height:1.45;color:#4a3a10}
+.save-acc.done p{color:var(--muted)}
+.code-show{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:26px;font-weight:800;letter-spacing:.08em;text-align:center;background:#fff;border-radius:12px;padding:12px 6px;margin:10px 0 6px;user-select:all;color:var(--ink)}
+.code-in{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:20px;letter-spacing:.08em;text-transform:uppercase;text-align:center}
 .invite h4{margin:0;font-size:17px}
 .invite p{margin:4px 0 12px;font-size:13px;color:#bdbdbd;line-height:1.4}
 .invite .code{font-size:28px;font-weight:800;letter-spacing:.18em;margin-bottom:12px}
@@ -1341,7 +1349,20 @@ function renderOnboarding() {
         <div class="welcome-cats">${CATS.slice(0, 6).map(c => `<span>${c.e} ${esc(c.label)}</span>`).join('')}</div>
       </div>
       <button class="btn primary" data-ob="toAge">Get started</button>
-      <p class="fine" style="text-align:center">Free, no email or password needed. Pinnit is for people 18 and over.</p>`;
+      <p class="fine" style="text-align:center">Free, no email or password needed. Pinnit is for people 18 and over.</p>
+      ${ob.notice ? `<div class="safe-note"><i>🔑</i><div>${esc(ob.notice)}</div></div>` : ''}
+      <div class="switch-auth">Already on Pinnit? <button data-ob="toRestore">Restore your account</button></div>`;
+  } else if (ob.step === 'restore') {
+    html = `<div class="stop-ic">🔑</div><h1>Restore your account</h1>
+      <p class="lead">Enter the recovery code you saved from your profile. Your account moves to this phone and signs out anywhere else.</p>
+      <form id="obForm" novalidate>
+        <label class="lbl" for="obCode">Recovery code</label>
+        <input id="obCode" class="field code-in" maxlength="16" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX" value="${esc(ob.code || '')}">
+        ${err}
+        <div style="margin-top:20px"><button class="btn primary" type="submit" id="obRestore">Restore</button></div>
+      </form>
+      <p class="hint" style="text-align:center;margin-top:14px">No code? Your account lives on the phone you made it on. Open Pinnit there, then Profile › Save my account.</p>
+      <div class="switch-auth"><button data-ob="toWelcome">Back</button></div>`;
   } else if (ob.step === 'age') {
     html = `${steps(1)}<h1>How old are you?</h1>
       <p class="lead">Pinnit brings people together in person, so it's for adults 18 and over. Others only ever see an age range, never your exact age.</p>
@@ -1392,10 +1413,11 @@ async function onboardingClick(e) {
   if (e.target.closest('[data-pickphoto]')) { ob.name = ($('#obName') || {}).value ?? ob.name; return pickPhoto('signup'); }
   if (!b) return;
   ob.err = '';
-  const go = step => { ob.step = step; renderOnboarding(); };
+  const go = step => { ob.step = step; ob.notice = ''; renderOnboarding(); };
   switch (b.dataset.ob) {
     case 'toWelcome': return go('welcome');
     case 'toAge': return go('age');
+    case 'toRestore': return go('restore');
     case 'toProfile': return go('profile');
     case 'pledge': ob.pledge = !ob.pledge; return renderOnboarding();
     case 'finish': {
@@ -1412,6 +1434,13 @@ async function onboardingClick(e) {
 }
 function onboardingSubmit(e) {
   e.preventDefault(); ob.err = '';
+  if (ob.step === 'restore') {
+    ob.code = $('#obCode').value.trim();
+    const btn = $('#obRestore'); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+    api.recover(ob.code).then(() => { ob.code = ''; setTimeout(() => toast('Welcome back! Your account is on this phone now', true), 1200); })
+      .catch(err => { ob.err = friendlyError(err); renderOnboarding(); });
+    return;
+  }
   if (ob.step === 'age') {
     const v = $('#obAge').value.trim(), age = Number(v);
     ob.age = v;
@@ -1505,7 +1534,12 @@ function resizeImage(file, size) {
 /* session handling */
 async function handleSession(session) {
   if (!session) {
-    if (S.user) teardown();
+    if (S.user) {
+      teardown();
+      // back to the start, with a note if this wasn't the person deleting their own account
+      Object.assign(ob, { step: 'welcome', age: '', name: '', gender: '', pledge: false, err: '', notice: ob.deleting ? '' : "You've been signed out. If you moved your account to another phone, use your recovery code below." });
+      ob.deleting = false;
+    }
     showAuth();
     return;
   }
@@ -1591,6 +1625,7 @@ VIEWS.profile = () => {
     </div>
     <div class="stats"><div class="stat"><b>${friends.length}</b><span>Friends</span></div><div class="stat"><b>${hosted}</b><span>Hosting</span></div><div class="stat"><b>${going}</b><span>Going</span></div></div>
     <div class="btn-row" style="margin-top:12px"><button class="btn secondary" data-act="editProfile">Edit profile</button></div>
+    ${api.makeRecoveryCode ? recoveryCard() : ''}
     ${S.progress ? progressHtml(S.progress) : ''}
 
     <div class="invite">
@@ -1626,7 +1661,21 @@ VIEWS.profile = () => {
     <div class="d-actions" style="margin-top:22px"><button class="btn danger" data-act="signOut">Delete my Pinnit</button></div>
     <p class="fine" style="text-align:center">Removes your profile, events, chats, reviews and badges from Pinnit for good. Your account lives on this phone, so clearing the browser's data also signs you out.</p>`;
 };
+// "Save my account": a recovery code to move the account to another phone or get it back
+function recoveryCard() {
+  const r = S.recovery || {};
+  if (r.code) return `<div class="save-acc"><b>🔑 Your recovery code</b>
+    <div class="code-show" aria-label="Recovery code ${esc(r.code.split('').join(' '))}">${esc(r.code)}</div>
+    <p>Screenshot this or keep it in your notes. Anyone with it can get into your account, so keep it private. It won't be shown again.</p>
+    <div class="btn-row"><button class="btn secondary" data-act="copyRecovery">Copy</button><button class="btn secondary" data-act="shareRecovery">Save to…</button></div>
+    <button class="text-link" data-act="hideRecovery">I've saved it</button></div>`;
+  return `<div class="save-acc ${r.saved ? 'done' : ''}"><b>${r.saved ? '✓ Account saved' : '🔑 Save my account'}</b>
+    <p>${r.saved ? "You've got a recovery code. Use it on the welcome screen of any phone to get your account back." : 'Get a recovery code so you can move your account to a new phone, or get it back if this browser forgets you.'}</p>
+    <button class="btn ${r.saved ? 'secondary' : 'primary'} sm" data-act="makeRecovery">${r.saved ? 'Make a new code' : 'Get my recovery code'}</button>
+    ${r.saved ? '<p class="hint">A new code replaces your old one.</p>' : ''}</div>`;
+}
 AFTER.profile = (props, soft) => {
+  if (!soft && api.recoveryStatus) api.recoveryStatus().then(saved => { S.recovery = { ...(S.recovery || {}), saved }; const t = S.stack[S.stack.length - 1]; if (t && t.kind === 'profile') renderModal(true); }).catch(() => {});
   if (!soft && api.blocks) api.blocks().then(b => { S.blocked = b; const t = S.stack[S.stack.length - 1]; if (t && t.kind === 'profile') renderModal(true); });
   if (!soft && S.recent == null) api.recentPlayers().then(r => { S.recent = r || []; const t = S.stack[S.stack.length - 1]; if (t && t.kind === 'profile') renderModal(true); }).catch(e => { console.error(e); S.recent = []; });
   const form = $('#codeForm');
@@ -2608,11 +2657,25 @@ $('#modal').addEventListener('click', async ev => {
     case 'editProfile': return push('editProfile', {});
     case 'signOut':
       if (!confirm('Delete your Pinnit? Your profile, events, chats, reviews and badges are removed for everyone. This can\'t be undone.')) return;
+      ob.deleting = true;
       stopSharing(true); closeAll(true); await api.signOut();
       Object.assign(ob, { step: 'welcome', age: '', name: '', gender: '', pledge: false, err: '' }); authState.photo = null; authState.photoUrl = '';
-      S.progress = null; S.blocked = null; safetyAsked.clear();
+      S.progress = null; S.blocked = null; S.recovery = null; safetyAsked.clear();
       return handleSession(null);
     case 'shareInvite': return shareInvite();
+    case 'makeRecovery':
+      if (S.recovery && S.recovery.saved && !confirm('Make a new recovery code? Your old code will stop working.')) return;
+      try { S.recovery = { saved: true, code: await api.makeRecoveryCode() }; renderModal(true); }
+      catch (e) { toast(friendlyError(e)); }
+      return;
+    case 'copyRecovery': try { await navigator.clipboard.writeText(S.recovery.code); toast('Recovery code copied. Paste it somewhere safe'); } catch { prompt('Your recovery code', S.recovery.code); } return;
+    case 'shareRecovery': {
+      const text = `My Pinnit recovery code: ${S.recovery.code}\nEnter it at ${location.origin} › Restore your account. Keep it private.`;
+      if (navigator.share) { try { await navigator.share({ title: 'Pinnit recovery code', text }); } catch {} return; }
+      try { await navigator.clipboard.writeText(text); toast('Copied'); } catch { prompt('Your recovery code', S.recovery.code); }
+      return;
+    }
+    case 'hideRecovery': S.recovery = { saved: true }; return renderModal(true);
     case 'copyCode': try { await navigator.clipboard.writeText(S.me.referral_code); toast('Code copied'); } catch { prompt('Your code', S.me.referral_code); } return;
     case 'savePassword': {
       const pw = $('#npIn').value; if (pw.length < 6) { $('#npErr').textContent = 'Password needs at least 6 characters'; $('#npErr').classList.remove('hidden'); return; }

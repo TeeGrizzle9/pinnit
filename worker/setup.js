@@ -30,7 +30,20 @@ CREATE TABLE IF NOT EXISTS blocks (user_id TEXT NOT NULL, blocked_id TEXT NOT NU
 CREATE TABLE IF NOT EXISTS safety (user_id TEXT NOT NULL, event_id TEXT NOT NULL, feel TEXT, note TEXT, created_at TEXT NOT NULL, PRIMARY KEY (user_id, event_id));
 CREATE TABLE IF NOT EXISTS badges (user_id TEXT NOT NULL, badge_id TEXT NOT NULL, PRIMARY KEY (user_id, badge_id));
 CREATE TABLE IF NOT EXISTS spot_checks (key TEXT PRIMARY KEY, result TEXT NOT NULL, checked_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS restore_attempts (ip TEXT NOT NULL, at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS restore_attempts_idx ON restore_attempts(ip, at);
 `;
+
+// Columns added after launch. CREATE TABLE IF NOT EXISTS won't add them to an existing table,
+// so add any that are missing (existing data is kept).
+const ADDED_COLUMNS = [['profiles', 'recovery_hash', 'TEXT']];
+async function migrate(db) {
+  for (const [table, col, type] of ADDED_COLUMNS) {
+    const { results } = await db.prepare(`PRAGMA table_info(${table})`).all();
+    if (!results.some(c => c.name === col)) await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`).run();
+  }
+  await db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS profiles_recovery_idx ON profiles(recovery_hash)').run();
+}
 
 let ready = null;
 export function ensureReady(db) {
@@ -39,6 +52,7 @@ export function ensureReady(db) {
 }
 async function setup(db) {
   await db.batch(SCHEMA.split(';').map(s => s.trim()).filter(Boolean).map(s => db.prepare(s)));
+  await migrate(db);
   const seeded = await db.prepare("SELECT value FROM meta WHERE key = 'seeded'").first();
   if (!seeded) await seed(db);
 }

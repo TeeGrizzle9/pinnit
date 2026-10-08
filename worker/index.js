@@ -79,6 +79,30 @@ route('POST', '/api/account', async ({ db, body }) => {
     .bind(id, await sha256(token), display_name, age_bracket, gender, code, now())]);
   return { id, token };
 }, { public: true });
+// Recovery codes: 12 characters from an alphabet with no look-alikes (no O/0, I/1), shown as XXXX-XXXX-XXXX.
+// Only a hash is stored. Making a new code replaces the old one.
+const CODE_ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const normCode = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const newCode = () => { const b = crypto.getRandomValues(new Uint8Array(12)); return [...b].map(x => CODE_ABC[x % 32]).join(''); };
+route('POST', '/api/me/recovery', async ({ db, me }) => {
+  const code = newCode();
+  await db.prepare('UPDATE profiles SET recovery_hash = ? WHERE id = ?').bind(await sha256('recovery:' + code), me).run();
+  return { code: code.match(/.{4}/g).join('-') };
+});
+route('GET', '/api/me/recovery', async ({ db, me }) => ({ saved: !!(await db.prepare('SELECT recovery_hash FROM profiles WHERE id = ?').bind(me).first('recovery_hash')) }));
+// moving an account to this phone: a fresh key is issued, which signs the account out everywhere else
+route('POST', '/api/recover', async ({ db, body, req }) => {
+  const ip = req.headers.get('CF-Connecting-IP') || 'local', hourAgo = new Date(Date.now() - H).toISOString();
+  if (await countSince(db, 'SELECT COUNT(*) AS n FROM restore_attempts WHERE ip = ? AND at > ?', ip, hourAgo) >= 8) fail(429, 'Too many tries. Wait an hour and try again');
+  await db.batch([db.prepare('INSERT INTO restore_attempts (ip, at) VALUES (?, ?)').bind(ip, now()), db.prepare('DELETE FROM restore_attempts WHERE at < ?').bind(new Date(Date.now() - D).toISOString())]);
+  const code = normCode(body.code);
+  if (code.length !== 12) fail(400, 'Recovery codes have 12 letters and numbers, like K7QM-2XRT-9HWP');
+  const p = await db.prepare('SELECT id FROM profiles WHERE recovery_hash = ?').bind(await sha256('recovery:' + code)).first();
+  if (!p) fail(404, "That code didn't match an account. Check it and try again");
+  const token = randomToken();
+  await db.prepare('UPDATE profiles SET token_hash = ? WHERE id = ?').bind(await sha256(token), p.id).run();
+  return { id: p.id, token };
+}, { public: true });
 // restore an account from the backup cookie when the browser has lost its saved key
 route('GET', '/api/session', async ({ db, req }) => {
   const m = /(?:^|;\s*)pinnit_key=([0-9a-f]{64})/.exec(req.headers.get('Cookie') || '');
@@ -505,7 +529,7 @@ export default {
       // Keep a server-set backup of the phone's key. Safari clears browser storage after 7 days without
       // a visit, but not cookies the server sets, so /api/session can quietly restore the account.
       const path = url.pathname;
-      const keep = path === '/api/account' || path === '/api/session' ? out && out.token
+      const keep = path === '/api/account' || path === '/api/session' || path === '/api/recover' ? out && out.token
         : path === '/api/me' && req.method === 'DELETE' ? '' : token;
       if (keep != null) res.headers.append('Set-Cookie', `pinnit_key=${keep}; Path=/api; HttpOnly; Secure; SameSite=Lax; Max-Age=${keep ? 34560000 : 0}`);
       return res;
