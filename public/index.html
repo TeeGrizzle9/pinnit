@@ -145,25 +145,31 @@ img.avatar{background:var(--soft)}
 #dropBtn{margin-top:4px;flex:none}
 
 /* placement */
-.center-pin{position:fixed;z-index:1050;left:50%;top:50%;transform:translate(-50%,-100%);pointer-events:none;display:flex;flex-direction:column;align-items:center}
-.center-pin .head{width:44px;height:44px;border-radius:50%;background:var(--green);display:grid;place-items:center;box-shadow:var(--shadow);transition:transform .2s}
-.center-pin .head i{width:12px;height:12px;border-radius:50%;background:#fff}
-.center-pin .stick{width:3px;height:18px;background:var(--green-d);border-radius:0 0 2px 2px}
-.center-pin.moving .head{transform:translateY(-10px)}
-.center-pin::after{content:"";position:absolute;bottom:-3px;width:10px;height:5px;border-radius:50%;background:rgba(0,0,0,.35)}
+/* the pin you move around: the Pinnit pin with its three people, green on a public space, red where it can't go */
+.center-pin{--pin:var(--ink);position:fixed;z-index:1050;left:50%;top:50%;transform:translate(-50%,-100%);pointer-events:none;display:flex;flex-direction:column;align-items:center}
+.center-pin svg{width:50px;height:70px;display:block;filter:drop-shadow(0 4px 6px rgba(16,48,42,.35));transition:transform .2s}
+.center-pin svg .body{fill:var(--pin);transition:fill .2s}
+.center-pin svg .ring{stroke:var(--pin);transition:stroke .2s}
+.center-pin.ok{--pin:var(--green)}
+.center-pin.bad{--pin:#d93a1e}
+.center-pin.moving svg{transform:translateY(-12px)}
+.center-pin::after{content:"";position:absolute;bottom:-3px;width:14px;height:6px;border-radius:50%;background:rgba(16,48,42,.35)}
 .place-bar{position:fixed;z-index:1200;left:0;right:0;bottom:0;background:#fff;border-radius:22px 22px 0 0;box-shadow:0 -6px 30px rgba(0,0,0,.14);padding:20px 16px calc(16px + var(--safe-b))}
 .place-bar small{font-size:13px;color:var(--muted)}
 .place-bar strong{display:block;font-size:19px;font-weight:600;margin:3px 0 16px;letter-spacing:-.01em;min-height:24px}
 .place-bar .btn+.btn{margin-top:8px}
-.spot{display:flex;gap:10px;align-items:flex-start;border-radius:12px;padding:10px 12px;margin:-6px 0 14px;font-size:14px;line-height:1.35;background:var(--soft);color:var(--muted)}
+/* spot notice drops down from the top, so the pin and the map stay in view */
+.spot-drop{position:fixed;z-index:1210;top:calc(76px + var(--safe-t));left:12px;right:12px;max-width:460px;margin:0 auto;pointer-events:none}
+.spot-drop .spot{pointer-events:auto;margin:0;box-shadow:var(--shadow);animation:drop .22s cubic-bezier(.2,.8,.2,1)}
+@keyframes drop{from{transform:translateY(-12px);opacity:0}}
+.spot{display:flex;gap:10px;align-items:flex-start;border-radius:14px;padding:11px 13px;font-size:14px;line-height:1.35;background:#fff;color:var(--muted)}
 .spot i{font-style:normal;font-size:18px;line-height:1.1;flex:none}
 .spot b{display:block;color:inherit}
-.spot.ok{background:#dff3e8;color:var(--green-d)}
+.spot.ok{background:#e9f7ef;color:var(--green-d)}
 .spot.bad{background:#fdecea;color:#a51400}
 .spot.warn{background:#fff6e0;color:#7a5200}
 .sugg{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .sugg button{background:#fff;border-radius:999px;padding:6px 11px;font-size:13px;font-weight:600;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.1)}
-.place-tip{position:fixed;z-index:1200;top:calc(76px + var(--safe-t));left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;font-size:14px;font-weight:600;padding:10px 16px;border-radius:999px;white-space:nowrap;box-shadow:var(--shadow)}
 
 /* markers: ring colour = category, filled = live */
 .pin{--c:var(--ink);position:relative;width:40px;height:40px;border-radius:50%;background:#fff;border:3px solid var(--c);box-shadow:0 3px 10px rgba(0,0,0,.3);display:grid;place-items:center;font-size:19px;line-height:1;transition:transform .15s}
@@ -459,7 +465,7 @@ textarea.field{height:92px;padding:12px 14px;resize:none;line-height:1.4}
 
 /* comfort settings */
 :focus-visible{outline:3px solid var(--blue);outline-offset:2px}
-html.big .sheet,html.big .modal,html.big .topbar,html.big .place-bar,html.big .auth-card,html.big .toast,html.big .place-tip,html.big .locate{zoom:1.15}
+html.big .sheet,html.big .modal,html.big .topbar,html.big .place-bar,html.big .auth-card,html.big .toast,html.big .spot-drop,html.big .locate{zoom:1.15}
 html.big .modal{max-height:80vh}
 html.big .sheet{max-height:73vh}
 html.contrast{--muted:#333;--line:#7a7a7a;--soft:#ececec;--soft2:#dedede}
@@ -493,7 +499,8 @@ html.calm .pin.live::before{display:none}
   .modal{padding-top:20px}
   .form-foot{bottom:-20px}
   .scrim{background:rgba(0,0,0,.18)}
-  .place-tip,.toast{left:calc(50% + 210px)}
+  .toast{left:calc(50% + 210px)}
+  .spot-drop{left:436px;right:20px;top:86px;margin:0}
   /* zoom scales insets too, so divide to keep the panels flush with the window */
   html.big .sheet,html.big .modal{top:calc(20px / 1.15);bottom:auto;height:calc((100vh - 40px) / 1.15);max-height:none}  .auth{align-items:center}
   .auth-card{width:440px;border-radius:26px;max-height:calc(100vh - 40px);padding:32px 30px}
@@ -538,12 +545,11 @@ html.calm .pin.live::before{display:none}
   </button>
 </section>
 
-<div id="centerPin" class="center-pin hidden"><div class="head"><i></i></div><div class="stick"></div></div>
-<div id="placeTip" class="place-tip hidden">Move the map to a park, court or venue</div>
+<div id="centerPin" class="center-pin hidden" aria-hidden="true"><svg viewBox="14 2 72 100"><path class="body" d="M50 96 C44 86 20 62 20 38 A30 30 0 0 1 80 38 C80 62 56 86 50 96 Z"/><g fill="#fff"><circle cx="37" cy="36" r="4.5"/><circle cx="63" cy="36" r="4.5"/><path d="M28 54 a9 8 0 0 1 18 0 Z"/><path d="M54 54 a9 8 0 0 1 18 0 Z"/><g class="ring" stroke-width="2.5"><circle cx="50" cy="30" r="6"/><path d="M38.5 54 a11.5 11 0 0 1 23 0 Z"/></g></g></svg></div>
+<div id="placeSpot" class="spot-drop hidden" role="status" aria-live="polite"></div>
 <div id="placeBar" class="place-bar hidden">
   <small id="placeKind">Event location</small>
   <strong id="placeName">Finding address…</strong>
-  <div id="placeSpot"></div>
   <button id="confirmPlace" class="btn primary">Confirm location</button>
   <button id="cancelPlace" class="btn secondary">Cancel</button>
 </div>
@@ -1910,15 +1916,16 @@ function startPlacing(latlng, mode = 'event') {
   $('#placeKind').textContent = mode === 'venue' ? 'New place' : 'Event location';
   $('#confirmPlace').textContent = mode === 'venue' ? 'Add this place' : 'Confirm location';
   $('#sheet').classList.add('hidden');
-  ['#centerPin', '#placeBar', '#placeTip'].forEach(s => $(s).classList.remove('hidden'));
-  if (latlng) map.setView(latlng, Math.max(map.getZoom(), 16)); else if (map.getZoom() < 16) map.setZoom(16);
+  ['#centerPin', '#placeBar', '#placeSpot'].forEach(s => $(s).classList.remove('hidden'));
+  if (latlng) map.setView(latlng, Math.max(map.getZoom(), 16), { animate: false }); else if (map.getZoom() < 16) map.setZoom(16, { animate: false });
   updatePlace(); updateSheetHeight();
-  setTimeout(() => $('#placeTip').classList.add('hidden'), 3500);
 }
 function renderSpot(spot) {
   const p = S.placing, el = $('#placeSpot');
   let html = '';
-  if (spot === 'checking') html = `<div class="spot"><i>⏳</i><div><b>Checking this spot…</b>Pins go in parks, courts and public venues</div></div>`;
+  $('#centerPin').classList.toggle('ok', !!(spot && spot !== 'checking' && spot.ok));
+  $('#centerPin').classList.toggle('bad', !!(spot && spot !== 'checking' && !spot.ok));
+  if (spot === 'checking') html = `<div class="spot"><i>📍</i><div><b>Move the map to a park, court or venue</b>Pins can only go in public places, never homes</div></div>`;
   else if (spot && spot.reason === 'exists') html = `<div class="spot warn"><i>📍</i><div><b>${esc(spot.venue.name)} is already on Pinnit</b>Add prices or hours to it instead.<div class="sugg"><button data-spotvenue="${esc(spot.venue.id)}">Open ${esc(spot.venue.name)}</button></div></div></div>`;
   else if (spot && spot.venue) html = `<div class="spot ok"><i>✓</i><div><b>At ${esc(spot.venue.name)}</b>Your event will link to its prices and hours</div></div>`;
   else if (spot && spot.reason === 'unavailable') html = `<div class="spot warn"><i>!</i><div><b>Couldn't check this spot</b>The map data isn't loading, so check your connection. Pins only go down once we've confirmed it's a public space.<div class="sugg"><button data-spotretry>Try again</button></div></div></div>`;
@@ -1966,6 +1973,8 @@ function updatePlace() {
     if (known) spot = p.mode === 'venue' ? { ok: false, reason: 'exists', venue: known } : { ok: true, kind: known.kind, name: known.name, venue: known };
     else spot = await checkSpot(c.lat, c.lng).catch(e => { console.warn('Public space check unavailable', e); return { ok: false, reason: 'unavailable' }; });
     if (S.placing !== p || p.latlng !== c) return;
+    // the map may have moved on without a moveend yet (e.g. mid-animation): never show a stale answer
+    if (map.getCenter().distanceTo(c) > 2) return updatePlace();
     p.spot = spot; p.venue = spot.venue && spot.ok ? spot.venue : null;
     p.name = spot.ok ? spot.name : '';
     p.place = p.name || `${c.lat.toFixed(4)}, ${c.lng.toFixed(4)}`;
@@ -1981,7 +1990,8 @@ function updatePlace() {
 }
 function cancelPlacing() {
   S.placing = null; clearTimeout(geoTimer); clearTimeout(areaTimer);
-  ['#centerPin', '#placeBar', '#placeTip'].forEach(s => $(s).classList.add('hidden'));
+  ['#centerPin', '#placeBar', '#placeSpot'].forEach(s => $(s).classList.add('hidden'));
+  $('#centerPin').classList.remove('ok', 'bad');
   $('#sheet').classList.remove('hidden'); updateSheetHeight();
 }
 function confirmPlacing() {
