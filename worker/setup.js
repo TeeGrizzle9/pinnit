@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS safety (user_id TEXT NOT NULL, event_id TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS badges (user_id TEXT NOT NULL, badge_id TEXT NOT NULL, PRIMARY KEY (user_id, badge_id));
 CREATE TABLE IF NOT EXISTS spot_checks (key TEXT PRIMARY KEY, result TEXT NOT NULL, checked_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS restore_attempts (ip TEXT NOT NULL, at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS moderation_log (id TEXT PRIMARY KEY, user_id TEXT, kind TEXT NOT NULL, reason TEXT NOT NULL, excerpt TEXT, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS restore_attempts_idx ON restore_attempts(ip, at);
 `;
 

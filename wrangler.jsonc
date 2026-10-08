@@ -13,5 +13,7 @@
   "d1_databases": [
     { "binding": "DB", "database_name": "pinnit-db" }
   ],
+  // Workers AI (free tier) for the Llama Guard language check
+  "ai": { "binding": "AI" },
   "observability": { "enabled": true }
 }

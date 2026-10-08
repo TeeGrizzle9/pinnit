@@ -1,9 +1,38 @@
-﻿// Pinnit API: a Cloudflare Worker in front of a D1 (SQLite) database.
+// Pinnit API: a Cloudflare Worker in front of a D1 (SQLite) database.
 // Everything under /api/* comes here; every other path is a static file (index.html, brand/, â€¦).
 // Accounts are phone-based: creating one returns a random token the app keeps in localStorage,
 // and only a SHA-256 hash of it is stored here.
 import { ensureReady } from './setup.js';
 import { checkSpot, inSydney, SPOT_MESSAGES } from '../public/spot-rules.js';
+import { findBadLanguage, languageMessage } from '../public/moderation.js';
+
+// Language check on anything other people will read. First a word filter (instant, catches swearing,
+// slurs and sexual terms even when disguised), then Cloudflare's Llama Guard model for things a word
+// list misses, like sexual suggestions or threats in ordinary words. If the AI is unavailable the
+// word filter still applies. Blocked attempts are logged in moderation_log for the team to review.
+const AI_BLOCK = { S1: 'violence', S2: 'crime', S3: 'sexual crime', S4: 'child safety', S10: 'hate', S12: 'sexual content' };
+async function moderate(ctx, what, ...texts) {
+  const text = texts.filter(Boolean).join('\n').trim();
+  if (!text) return;
+  let reason = findBadLanguage(text) ? 'language' : null;
+  if (!reason && ctx.env.AI && text.length > 2) {
+    try {
+      const r = await ctx.env.AI.run('@cf/meta/llama-guard-3-8b', { messages: [{ role: 'user', content: text.slice(0, 1500) }] });
+      const out = r && (r.response ?? r.result?.response ?? r);
+      const unsafe = typeof out === 'object' ? out.safe === false : /unsafe/i.test(String(out));
+      const cats = typeof out === 'object' ? (out.categories || []) : String(out).match(/S\d+/g) || [];
+      const hit = cats.map(c => String(c).toUpperCase()).find(c => AI_BLOCK[c]);
+      if (unsafe && hit) reason = AI_BLOCK[hit];
+    } catch (e) { console.warn('AI moderation unavailable', e && e.message); }
+  }
+  if (!reason) return;
+  try {
+    await ctx.db.prepare('INSERT INTO moderation_log (id, user_id, kind, reason, excerpt, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(uuid(), ctx.me, what, reason, text.slice(0, 300), now()).run();
+  } catch {}
+  fail(422, languageMessage(...(WHAT[what] || ['This'])));
+}
+const WHAT = { message: ['Your message', 'sent'], event: ['Your event', 'posted'], place: ['This place', 'saved'], price: ['This price', 'saved'], hours: ['These hours', 'saved'], review: ['Your review', 'posted'], profile: ['Your profile', 'saved'], name: ['That name', 'saved'] };
 
 // map tiles are cached at Cloudflare's edge for a day, so checks are fast after the first one
 const edgeFetch = (url, init) => fetch(url, { ...init, cf: { cacheTtl: 86400, cacheEverything: true } });
@@ -68,8 +97,10 @@ const routes = [];
 const route = (method, pattern, handler, opts = {}) => routes.push({ method, re: new RegExp('^' + pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)') + '$'), handler, ...opts });
 
 // accounts
-route('POST', '/api/account', async ({ db, body }) => {
+route('POST', '/api/account', async ctx => {
+  const { db, body } = ctx;
   const display_name = str(body.display_name, 30, { required: true, name: 'first name' });
+  await moderate(ctx, 'name', display_name);
   const age_bracket = oneOf(body.age_bracket, AGES, 'age range');
   const gender = oneOf(body.gender, GENDERS, 'gender', 'prefer_not');
   const id = uuid(), token = randomToken();
@@ -111,8 +142,10 @@ route('GET', '/api/session', async ({ db, req }) => {
   return p ? { id: p.id, token: m[1] } : { none: true };
 }, { public: true });
 route('GET', '/api/me', async ({ db, me }) => profileOut(await db.prepare(`SELECT ${PUBLIC}, referral_code FROM profiles WHERE id = ?`).bind(me).first()));
-route('PATCH', '/api/me', async ({ db, me, body }) => {
+route('PATCH', '/api/me', async ctx => {
+  const { db, me, body } = ctx;
   const cur = await db.prepare('SELECT * FROM profiles WHERE id = ?').bind(me).first();
+  await moderate(ctx, 'profile', 'display_name' in body ? body.display_name : '', 'bio' in body ? body.bio : '');
   const next = {
     display_name: 'display_name' in body ? str(body.display_name, 30, { required: true, name: 'first name' }) : cur.display_name,
     bio: 'bio' in body ? str(body.bio, 160) : cur.bio,
@@ -210,7 +243,8 @@ async function placeOrFail(db, lat, lng, type) {
   if (!spot.ok) fail(422, SPOT_MESSAGES[spot.reason] || SPOT_MESSAGES.private);
   return spot;
 }
-route('POST', '/api/events', async ({ db, me, body }) => {
+route('POST', '/api/events', async ctx => {
+  const { db, me, body } = ctx;
   if (await countSince(db, 'SELECT COUNT(*) AS n FROM events WHERE host_id = ? AND created_at > ?', me, new Date(Date.now() - D).toISOString()) >= 10) fail(429, "You've posted 10 events today. Try again tomorrow");
   const lat = num(body.lat, -90, 90, 'location'), lng = num(body.lng, -180, 180, 'location');
   if (!inSydney(lat, lng)) fail(422, SPOT_MESSAGES.outside);
@@ -223,6 +257,7 @@ route('POST', '/api/events', async ({ db, me, body }) => {
   if (activity === 'other' && !title) fail(400, 'Give your event a name so people know what it is');
   const ages = body.age_brackets ? listOf(body.age_brackets, AGES) : [];
   const access = listOf(body.access, ACCESS);
+  await moderate(ctx, 'event', title, body.notes, body.meeting_point);
   const spot = await placeOrFail(db, lat, lng, 'event');
   let venue_id = body.venue_id ? String(body.venue_id) : (spot.venue_id || null);
   if (venue_id && !await db.prepare('SELECT 1 FROM venues WHERE id = ?').bind(venue_id).first()) venue_id = null;
@@ -277,10 +312,12 @@ route('GET', '/api/events/:id/messages', async ({ db, me, params, url }) => {
     .bind(params.id, after, me).all();
   return results;
 });
-route('POST', '/api/events/:id/messages', async ({ db, me, params, body }) => {
+route('POST', '/api/events/:id/messages', async ctx => {
+  const { db, me, params, body } = ctx;
   if (!await isParticipant(db, params.id, me)) fail(403, 'Join the event to chat');
   if (await countSince(db, 'SELECT COUNT(*) AS n FROM messages WHERE user_id = ? AND created_at > ?', me, new Date(Date.now() - 60e3).toISOString()) >= 15) fail(429, 'Slow down a little');
   const m = { id: uuid(), event_id: params.id, user_id: me, body: str(body.body, 500, { required: true, name: 'message' }), created_at: now() };
+  await moderate(ctx, 'message', m.body);
   await write(db, [db.prepare('INSERT INTO messages (id, event_id, user_id, body, created_at) VALUES (?, ?, ?, ?, ?)').bind(m.id, m.event_id, m.user_id, m.body, m.created_at)]);
   return m;
 });
@@ -360,10 +397,12 @@ const venueFields = body => ({
   name: str(body.name, 80, { required: true, min: 2, name: 'venue name' }), kind: oneOf(body.kind, VKINDS, 'venue type'),
   access: JSON.stringify(listOf(body.access, VENUE_ACCESS)), description: str(body.description, 400, { name: 'description' }), website: str(body.website, 200, { name: 'website' })
 });
-route('POST', '/api/venues', async ({ db, me, body }) => {
+route('POST', '/api/venues', async ctx => {
+  const { db, me, body } = ctx;
   if (await countSince(db, 'SELECT COUNT(*) AS n FROM venues WHERE created_by = ? AND created_at > ?', me, new Date(Date.now() - D).toISOString()) >= 10) fail(429, "You've added a lot of venues today. Try again tomorrow");
   const lat = num(body.lat, -90, 90, 'location'), lng = num(body.lng, -180, 180, 'location');
   const f = venueFields(body);
+  await moderate(ctx, 'place', f.name, f.description);
   const near = await db.prepare('SELECT name FROM venues WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?').bind(lat - 0.0003, lat + 0.0003, lng - 0.0004, lng + 0.0004).first();
   if (near) fail(409, `${near.name} is already on Pinnit. Add prices or hours to it instead`);
   await placeOrFail(db, lat, lng, 'venue');
@@ -372,10 +411,12 @@ route('POST', '/api/venues', async ({ db, me, body }) => {
     .bind(id, f.name, f.kind, lat, lng, str(body.address, 120, { name: 'address' }), f.description, f.website, f.access, me, body.manager_id ? me : null, now())]);
   return { id };
 });
-route('PATCH', '/api/venues/:id', async ({ db, me, params, body }) => {
+route('PATCH', '/api/venues/:id', async ctx => {
+  const { db, me, params, body } = ctx;
   const v = await getVenue(db, params.id);
   if (v.created_by !== me && v.manager_id !== me) fail(403, 'Only the person who added this venue or its manager can edit it');
   const f = venueFields({ ...v, access: parseJ(v.access), ...body });
+  await moderate(ctx, 'place', f.name, f.description);
   await write(db, [db.prepare('UPDATE venues SET name = ?, kind = ?, access = ?, description = ?, website = ? WHERE id = ?').bind(f.name, f.kind, f.access, f.description, f.website, v.id)]);
   return { ok: true };
 });
@@ -389,8 +430,10 @@ route('POST', '/api/venues/:id/confirm-prices', async ({ db, params }) => {
   await write(db, [db.prepare('UPDATE venues SET prices_checked_at = ? WHERE id = ?').bind(now(), params.id)]);
   return { ok: true };
 });
-route('POST', '/api/prices', async ({ db, me, body }) => {
+route('POST', '/api/prices', async ctx => {
+  const { db, me, body } = ctx;
   const label = str(body.label, 60, { required: true, name: 'label' }), price = num(body.price, 0, 99999, 'price'), unit = oneOf(body.unit, UNITS, 'unit', 'entry'), note = str(body.note, 100, { name: 'note' });
+  await moderate(ctx, 'price', label, note);
   if (body.id) {
     const p = await db.prepare('SELECT id FROM venue_prices WHERE id = ?').bind(String(body.id)).first() || fail(404, 'That price was removed');
     await write(db, [db.prepare('UPDATE venue_prices SET label = ?, price = ?, unit = ?, note = ?, updated_by = ?, updated_at = ? WHERE id = ?').bind(label, price, unit, note, me, now(), p.id)]);
@@ -406,7 +449,9 @@ route('DELETE', '/api/prices/:id', async ({ db, me, params }) => {
   await write(db, [db.prepare('DELETE FROM venue_prices WHERE id = ?').bind(params.id)]);
   return { ok: true };
 });
-route('POST', '/api/slots', async ({ db, me, body }) => {
+route('POST', '/api/slots', async ctx => {
+  const { db, me, body } = ctx;
+  await moderate(ctx, 'hours', body.note);
   const v = await getVenue(db, String(body.venue_id));
   if (v.manager_id !== me) fail(403, 'Only the venue manager can post hours');
   const days = listOf(body.days, [0, 1, 2, 3, 4, 5, 6]);
@@ -423,7 +468,9 @@ route('DELETE', '/api/slots/:id', async ({ db, me, params }) => {
   await write(db, [db.prepare('DELETE FROM venue_slots WHERE id = ?').bind(params.id)]);
   return { ok: true };
 });
-route('POST', '/api/reviews', async ({ db, me, body }) => {
+route('POST', '/api/reviews', async ctx => {
+  const { db, me, body } = ctx;
+  await moderate(ctx, 'review', body.body);
   const v = await getVenue(db, String(body.venue_id));
   const rating = Math.round(num(body.rating, 1, 5, 'rating'));
   const photo = body.photo == null ? null : /^\/api\/photo\/[\w-]+$/.test(body.photo) ? body.photo : fail(400, 'Bad photo');
@@ -523,7 +570,7 @@ export default {
         try { body = await req.json(); } catch { body = {}; }
         if (!body || typeof body !== 'object') body = {};
       }
-      const out = await r.handler({ db, me, params, body, url, req });
+      const out = await r.handler({ db, me, params, body, url, req, env });
       if (r.raw) return out;
       const res = json(out);
       // Keep a server-set backup of the phone's key. Safari clears browser storage after 7 days without

@@ -426,6 +426,9 @@ textarea.field{height:92px;padding:12px 14px;resize:none;line-height:1.4}
 .welcome-cats span{background:rgba(255,255,255,.16);border-radius:999px;padding:5px 10px;font-size:13px;font-weight:700}
 
 /* safety */
+.mod-note{display:flex;gap:10px;align-items:flex-start;background:var(--sun-soft);border:1.5px solid var(--sun);border-radius:14px;padding:10px 12px;margin:8px 0 2px;font-size:13px;line-height:1.45;color:#4a3a10;flex:none}
+.mod-note i{font-style:normal;font-size:18px}
+.mod-note b{display:block;font-size:14px;color:var(--ink);margin-bottom:1px}
 .safe-note{display:flex;gap:10px;align-items:flex-start;background:var(--sun-soft);border-radius:12px;padding:10px 12px;margin-top:12px;font-size:13px;line-height:1.4;color:#5c4300}
 .safe-note i{font-style:normal;font-size:17px;flex:none}
 .safe-note b{color:#3d2c00}
@@ -1906,6 +1909,7 @@ VIEWS.chat = props => {
   return `${head(labelOf(e))}
     <p class="hint" style="margin:0 0 4px">${e.players.length} going · only people in this event can see the chat</p>
     <div class="chat-list" id="chatList"><p class="muted-s" style="text-align:center">Loading messages…</p></div>
+    <div id="chatNote" class="hidden" role="alert"></div>
     <form class="chat-form" id="chatForm"><input id="chatIn" maxlength="500" placeholder="Message the group" autocomplete="off" enterkeyhint="send"><button type="submit" aria-label="Send">${I.send}</button></form>`;
 };
 AFTER.chat = async props => {
@@ -1914,9 +1918,19 @@ AFTER.chat = async props => {
   $('#chatForm').addEventListener('submit', async ev => {
     ev.preventDefault();
     const inp = $('#chatIn'), body = inp.value.trim(); if (!body) return;
-    inp.value = '';
-    try { await api.sendMessage(props.id, body); } catch (e) { toast(friendlyError(e)); inp.value = body; }
+    const note = $('#chatNote');
+    // instant check on the phone; the server checks again (including an AI safety check)
+    const mod = await moderation;
+    if (mod.findBadLanguage(body)) { note.innerHTML = modNoteHtml(mod.languageMessage('Your message', 'sent')); note.classList.remove('hidden'); return; }
+    inp.value = ''; note.classList.add('hidden');
+    try { await api.sendMessage(props.id, body); }
+    catch (e) {
+      inp.value = body;
+      const m = friendlyError(e);
+      if (/welcoming space/.test(m)) { note.innerHTML = modNoteHtml(m); note.classList.remove('hidden'); } else toast(m);
+    }
   });
+  $('#chatIn').addEventListener('input', () => $('#chatNote').classList.add('hidden'));
   try {
     const msgs = await api.messages(props.id);
     const list = $('#chatList'); if (!list) return;
@@ -1949,6 +1963,9 @@ function appendMessage(m, props) {
    vector tiles the map draws, so a check takes milliseconds. The server checks again on post.
    ===================================================================== */
 const spotRules = import('./spot-rules.js');
+// language filter shared with the server (moderation.js)
+const moderation = import('./moderation.js');
+const modNoteHtml = msg => `<div class="mod-note"><i>🤝</i><div><b>Let's keep Pinnit welcoming</b>${esc(msg)}</div></div>`;
 const spotCache = new Map();
 // throws if the map data can't be loaded: we never guess
 async function checkSpot(lat, lng) {
@@ -2161,6 +2178,7 @@ async function postEvent() {
   if (isNaN(start)) return show('That date or time looks off');
   if (+start < Date.now() - 5 * 60000) return show('That start time has already passed');
   if (+start > Date.now() + MAX_AHEAD_DAYS * 864e5) return show(`Events can be up to ${MAX_AHEAD_DAYS} days ahead`);
+  { const mod = await moderation; if (mod.findBadLanguage([d.title, d.notes, d.meeting].join('\n'))) return show(mod.languageMessage('Your event')); }
   const ev = {
     activity: d.activity, category: d.cat, title: d.title.trim() || null, notes: d.notes.trim() || null, meeting_point: d.meeting.trim() || null,
     skill: NO_LEVEL_CATS.includes(d.cat) ? null : d.skill, cost: d.cost === '' ? null : Math.max(0, Math.min(1000, +d.cost)),
