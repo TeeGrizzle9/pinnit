@@ -2,68 +2,67 @@
 
 Drop a pin and bring your community together: knitting circles, chess in the park, dance, pickup games and more around Sydney.
 
-## Files
+Live at https://pinnit.tpotter098.workers.dev
 
-- `index.html`: the whole app.
-- `local-api.js`: the built-in backend the app runs on right now (see below).
-- `site.webmanifest` and `brand/`: logo, favicons and "Add to Home Screen" icons from the Pinnit logo kit.
-- `supabase/`: database scripts and the `place-pin` function, for when we move to a shared backend.
+## How it fits together
 
-## How it works right now (no server)
+```
+public/            the website (served as static files)
+  index.html       the whole app
+  cloud-api.js     talks to the server at /api
+  spot-rules.js    "is this a public space?" rules, shared by the app and the server
+  brand/           logo, favicons, app icons, link preview
+worker/            the server (a Cloudflare Worker)
+  index.js         every /api route
+  setup.js         database tables + the example events, created on first run
+wrangler.jsonc     Cloudflare config: site + Worker + D1 database
+supabase/          older Supabase version of the backend, kept for reference (not used)
+```
 
-Pinnit currently runs entirely in the browser, so anyone can scan the QR code and use it with no
-sign-up. On first open it asks for their age (under 18s are stopped and the phone remembers that),
-a first name and a safety promise. Everything they do (pins, joins, chat, reviews, badges) is saved
-on **that phone only** via localStorage, alongside a small sample Sydney community. Nothing is
-shared between phones. "Start over on this phone" in the profile wipes it, which is handy for
-handing a demo phone to the next person.
+- **One shared database** (Cloudflare D1, free tier). Everyone sees the same pins, chats, places and reviews.
+- **No passwords.** On first open, people enter their age (under 18s are stopped), a first name and a safety
+  promise. The phone gets a random key kept in its browser storage; only a hash of it is stored on the server.
+  "Delete my Pinnit" in the profile removes the account and everything it made.
+- **Example events** are flagged `is_sample`, labelled "Example" in the app, and repeat weekly so the map is
+  never empty. Real events disappear as soon as they finish.
+- **Updates arrive by polling**: every 15 seconds for the map, every 4 seconds for an open group chat.
 
-Things that only make sense with a shared backend and are local-only for now: reports and blocks
-(saved on the phone, nobody reviews them), friend requests (the sample locals accept automatically),
-and the "did you feel safe?" answers.
+## Deploying
+
+Pushing to `main` on GitHub (TeeGrizzle9/pinnit) redeploys the Worker automatically through Cloudflare
+Workers Builds. The first deploy creates the D1 database (`pinnit-db`) by itself, and the Worker creates its
+tables and example events on the first request.
+
+The `name` in `wrangler.jsonc` must match the Worker's name in the Cloudflare dashboard (`pinnit`).
 
 ## Run it on your computer
 
 ```
-node .claude/serve.js
+npx wrangler dev
 ```
 
-(from the folder above this one), then open http://localhost:5173. Or `python -m http.server 5173` inside this folder.
+inside this folder, then open http://localhost:8787. It uses a local copy of the database, so nothing touches
+the live site.
 
-## Deploying (Cloudflare Pages)
+## Looking at the data
 
-The site is plain static files, so there is no build step. In Cloudflare Pages, connect the GitHub
-repo, leave the build command empty and set the build output directory to `/` (or to `pinnit-app`
-if the repo also contains the logo kit). Every push redeploys automatically.
+Cloudflare dashboard › Storage & Databases › D1 › `pinnit-db` › Console. Useful queries:
 
-After the first deploy, change the `og:image` meta tag in `index.html` to the full address
-(e.g. `https://pinnit.pages.dev/brand/pinnit-link-preview-1200x630.png`) so link previews show the logo.
-
-## Switching to the real backend (later)
-
-1. In `index.html`, replace `<script src="local-api.js"></script>` with `<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>`.
-2. Supabase › SQL Editor: paste in `supabase/community-update.sql` and run it.
-3. In Supabase › Authentication › URL Configuration, add the Cloudflare Pages address.
-4. Reviews, reports, blocks, safety check-ins and badges still need tables and `makeApi()` methods; they're local-only today.
-
-## Making "public spaces only" impossible to get around
-
-Without these steps, the check runs only in the browser. Do both, one straight after the other:
-
-3. Supabase › SQL Editor: run `supabase/public-spaces.sql`. From then on, nobody can add events or venues straight into the database.
-4. Supabase › Edge Functions › Deploy a new function › name it `place-pin`. Add the two files from `supabase/functions/place-pin/`, `index.ts` and `spot.ts`, then deploy. With the CLI instead: `supabase functions deploy place-pin`.
-
-Between steps 3 and 4 nobody can post. Once both are done, every new pin is checked against OpenStreetMap on the server before it's saved. If OpenStreetMap's map data can't be reached, the pin is refused with "try again" rather than let through. Checked spots are cached for 30 days in `spot_checks`. Pins can't be moved after they're placed.
-
-To undo the lock, run `grant insert on public.events, public.venues to authenticated;`
-
-## Verifying venue managers
-
-Anyone can tap "I manage this" on a venue that has no manager. They're shown as **Not yet verified** until you confirm who they are. Then open Supabase › Table Editor › `venues` and set `manager_verified` to `true`.
+- Reports to review: `SELECT * FROM reports ORDER BY created_at DESC;`
+- Verify a venue manager: `UPDATE venues SET manager_verified = 1 WHERE id = '...';`
+- Remove an event: `DELETE FROM events WHERE id = '...';` (and its rows in `participants` and `messages`)
 
 ## Things to know
 
-- **Public space check:** a pin must be *inside* a park, court, pool, school, beach or plaza, or within 15 m of a venue point such as a café or library. Being near a park isn't enough, so a house across the road won't pass. Anything inside a house or apartment block is always refused. The rules live in `supabase/functions/place-pin/spot.ts`, with a browser copy in `index.html` used by the local backend. Keep the two in step.
-- **What it can't catch:** it trusts OpenStreetMap. If a place is mapped wrongly (say a private garden tagged as a park), a pin could go there. Fix that on openstreetmap.org and everyone benefits.
-- **The map** uses [OpenFreeMap](https://openfreemap.org) vector tiles: free, no API key, no account, no request limits, and allowed in production. It's drawn by MapLibre GL inside Leaflet using the "Positron" style, with parks and sports grounds tinted green so public spaces stand out. If WebGL isn't available or OpenFreeMap can't be reached, the app falls back to OpenStreetMap's own tiles, which suit light use only. OpenFreeMap is run by one person on donations with no uptime guarantee. If you ever need one, its tiles can be self-hosted, or you can move to a paid provider by changing `BASEMAP.style`.
-- **Venue prices** are community-edited, like a wiki. Anyone signed in can add or correct a price. Only the person who added it, or the venue manager, can remove it.
+- **Public space check:** a pin must be inside a mapped park, sports pitch, school ground, playground, beach or
+  plaza, or right next to a named public venue (pool, library, community centre, café). It's refused on
+  railway land or within 12 m of tracks, inside buildings in residential areas, and venue points don't count
+  in residential areas at all (so backyard pools never pass). The rules read OpenStreetMap data from the same
+  OpenFreeMap tiles the map draws, so a check takes a fraction of a second. The app checks as you move the map,
+  and the server checks again when an event or place is posted.
+- **What it can't catch:** it trusts OpenStreetMap. If a place is mapped wrongly, a pin could go there. Fixing it
+  on openstreetmap.org fixes it for everyone (tiles refresh weekly).
+- **Moderation is manual for now:** reports are stored in the `reports` table; nobody is notified automatically.
+- **The map** uses [OpenFreeMap](https://openfreemap.org) vector tiles: free, no API key, allowed in production.
+- **Place prices** are community-edited, like a wiki. Anyone can add or correct a price. Only the person who
+  added it, or the venue manager, can remove it.

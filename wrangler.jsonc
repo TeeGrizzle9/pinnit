@@ -1,0 +1,17 @@
+﻿// Cloudflare config for Pinnit: static site + /api Worker + shared D1 database.
+// "name" must match the Worker name in the Cloudflare dashboard.
+// The D1 database has no database_id on purpose: the first deploy creates it automatically.
+{
+  "name": "pinnit",
+  "main": "worker/index.js",
+  "compatibility_date": "2025-09-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "pinnit-db" }
+  ],
+  "observability": { "enabled": true }
+}
