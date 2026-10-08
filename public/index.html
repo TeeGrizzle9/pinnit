@@ -109,6 +109,12 @@ img.avatar{background:var(--soft)}
 .chips.small .chip{height:34px;font-size:13px;padding:0 12px}
 .list{overflow-y:auto;margin:0 -16px;padding:2px 16px 8px;flex:1;min-height:0}
 .sheet:not(.expanded) .list{display:none}
+/* map mode: the panel tucks away to just the handle and Drop a pin */
+.sheet.mini #tabs,.sheet.mini .sheet-head,.sheet.mini #catChips,.sheet.mini .list{display:none!important}
+.mini-hint{display:none;text-align:center;font-size:12px;font-weight:700;color:var(--muted);margin:-6px 0 8px}
+.sheet.mini .mini-hint{display:block}
+.head-btns{display:flex;gap:6px;flex:none}
+.pill-btn.icon{width:36px;padding:0;justify-content:center}
 .card{display:flex;gap:14px;align-items:center;width:100%;text-align:left;padding:14px 0;border-bottom:1px solid var(--soft)}
 .card:last-child{border-bottom:0}
 .card-ic{width:50px;height:50px;border-radius:14px;background:var(--soft);display:grid;place-items:center;font-size:25px;flex:none;position:relative}
@@ -265,6 +271,7 @@ textarea.field{height:92px;padding:12px 14px;resize:none;line-height:1.4}
 .pchip .avatar{width:28px;height:28px;font-size:10px}
 .pchip.me .avatar{outline:2px solid var(--green)}
 .pchip .arr{width:8px;height:8px;border-radius:50%;background:var(--green)}
+.pchip .new-tag{font-size:10.5px;font-weight:800;background:var(--sun);color:var(--ink);border-radius:999px;padding:1px 6px}
 .host-card{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:var(--soft);border-radius:14px;padding:12px;margin:14px 0 4px}
 .host-card .avatar{width:44px;height:44px;font-size:15px}
 .host-card div{flex:1;min-width:0}
@@ -528,14 +535,15 @@ html.calm .pin.live::before{display:none}
 </button>
 
 <section id="sheet" class="sheet">
-  <button class="handle" id="sheetHandle" aria-label="Expand list"></button>
+  <button class="handle" id="sheetHandle" aria-label="Show or hide the list"></button>
+  <div class="mini-hint">Swipe up for Explore, Places and My events</div>
   <div class="seg" id="tabs"><button data-tab="explore" class="on">Explore</button><button data-tab="venues">Places</button><button data-tab="mine">My events</button></div>
   <div class="sheet-head">
     <div>
       <h2 id="countTitle">Find something on</h2>
       <p class="sub"><span class="live-dot-s"></span><span id="countSub">Loading…</span></p>
     </div>
-    <button id="toggleList" class="pill-btn">View list</button>
+    <div class="head-btns"><button id="toggleList" class="pill-btn">View list</button><button id="hideSheet" class="pill-btn icon" aria-label="Hide the panel to see more of the map" title="More map"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10302A" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button></div>
   </div>
   <div id="catChips" class="chips"></div>
   <div id="list" class="list"></div>
@@ -708,10 +716,11 @@ const accOf = id => [...ACCESS, ...VIBES].find(a => a.id === id);
 const noiseOf = id => NOISE.find(n => n.id === id);
 const vkindOf = id => VKINDS.find(k => k.id === id) || VKINDS[VKINDS.length - 1];
 const unitLabel = id => (PRICE_UNITS.find(u => u[0] === id) || [, id || ''])[1];
+const priceLabel = p => +p.price === 0 ? 'Free entry' : `From ${money(p.price)} ${unitLabel(p.unit)}`;
 const money = n => +n === 0 ? 'Free' : '$' + (+n).toFixed(+n % 1 ? 2 : 0);
 const toMins = t => { const [h, m] = String(t || '0:0').split(':').map(Number); return h * 60 + (m || 0); };
 const fmtMins = m => { const h = Math.floor(m / 60) % 24, mm = m % 60; return `${h % 12 || 12}${mm ? ':' + pad(mm) : ''}${h < 12 ? 'am' : 'pm'}`; };
-const agoLabel = ts => { const d = Math.round((Date.now() - +new Date(ts)) / 864e5); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : d < 30 ? `${d} days ago` : d < 365 ? `${Math.round(d / 30)} months ago` : 'over a year ago'; };
+const agoLabel = ts => { const d = Math.round((Date.now() - +new Date(ts)) / 864e5); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : d < 30 ? `${d} days ago` : d < 45 ? 'a month ago' : d < 365 ? `${Math.round(d / 30)} months ago` : 'over a year ago'; };
 const genderLabel = id => (GENDERS.find(g => g.id === id) || {}).label || '';
 const ruleLabel = id => (RULES.find(r => r.id === id) || RULES[0]).label;
 const initials = n => (n || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
@@ -1057,7 +1066,7 @@ function venueCard(v) {
   const tags = [];
   if (open) tags.push('<span class="tag green">Open now</span>');
   if (v.reviews && v.reviews.length) tags.push(`<span class="tag"><span class="stars">★</span> ${v.rating.toFixed(1)} (${v.reviews.length})</span>`);
-  if (fp) tags.push(`<span class="tag">From ${money(fp.price)} ${esc(unitLabel(fp.unit))}</span>`);
+  if (fp) tags.push(`<span class="tag">${esc(priceLabel(fp))}</span>`);
   if (v.access.includes('wheelchair')) tags.push('<span class="tag" title="Wheelchair accessible">♿</span>');
   if (v.manager_id) tags.push(`<span class="tag">${v.manager_verified ? 'Verified manager' : 'Has manager'}</span>`);
   return `<button class="card" data-venue="${esc(v.id)}">
@@ -1170,7 +1179,7 @@ async function loadAll() {
     refreshProgress();
   } catch (err) {
     console.error(err);
-    $('#countSub').textContent = 'Could not load events. Pull to retry.';
+    $('#countSub').textContent = "Couldn't load. Check your connection, we'll keep trying";
   } finally {
     loading = false;
     if (reloadQueued) { reloadQueued = false; scheduleLoad(); }
@@ -1183,7 +1192,7 @@ function onGlobalChange(table, p) {
     const e = S.events.find(x => x.id === n.event_id);
     if (e && isHost(e)) setTimeout(() => {
       const who = S.people.get(n.user_id);
-      toast(`${first(who && who.display_name)} joined ${labelOf(e)}`);
+      toast(n.first_timer ? `${first(who && who.display_name)} joined ${labelOf(e)}. It's their first Pinnit, say hi! 🌱` : `${first(who && who.display_name)} joined ${labelOf(e)}`, !!n.first_timer);
     }, 900);
   }
   if (table === 'friendships' && S.user) {
@@ -1341,7 +1350,7 @@ function renderOnboarding() {
       <div class="help-box"><b>Need someone to talk to?</b>Kids Helpline is free and open 24/7 for anyone up to 25: <a href="tel:1800551800">1800 55 1800</a></div>`;
   } else if (ob.step === 'profile') {
     html = `${steps(2)}<h1>What should people call you?</h1>
-      <p class="lead">Just a first name is perfect. Only people at the same events see your profile.</p>
+      <p class="lead">Just a first name is perfect. People see your first name, photo and age range, never your exact age.</p>
       <form id="obForm" novalidate>
         <button type="button" class="photo-pick" data-pickphoto>${authState.photoUrl ? `<img class="avatar" src="${authState.photoUrl}" alt="">` : `<span class="avatar">${I.cam}</span>`}<div><strong>${authState.photoUrl ? 'Looking good' : 'Add a photo'}</strong><span>Optional. A smile helps people spot you</span></div></button>
         <label class="lbl" for="obName">First name</label><input id="obName" class="field" maxlength="30" autocomplete="given-name" value="${esc(ob.name)}">
@@ -1385,6 +1394,7 @@ async function onboardingClick(e) {
       if (!ob.pledge) return;
       b.disabled = true; b.innerHTML = '<span class="spinner"></span>';
       try {
+        store.set('pinnit_welcome', true);
         await api.createAccount({ display_name: ob.name, age_bracket: bracketFor(+ob.age), gender: ob.gender || 'prefer_not' });
         const ref = store.get('pinnit_ref', '');
         if (ref) api.addFriendByCode(ref).catch(() => {});
@@ -1508,6 +1518,9 @@ async function handleSession(session) {
   await loadAll();
   if (!S.me.age_bracket) push('editProfile', { locked: true, onboarding: true });
   else if (store.get('pinnit_pending_photo', false) && !S.me.avatar_url) { store.del('pinnit_pending_photo'); toast('Add your profile photo from your profile'); }
+  const sharedPlace = store.get('pinnit_open_place', null);
+  if (sharedPlace) { store.del('pinnit_open_place'); if (S.venues.some(v => v.id === sharedPlace)) { S.tab = 'venues'; renderAll(); openVenue(sharedPlace); } }
+  if (store.get('pinnit_welcome', false)) { store.del('pinnit_welcome'); setTimeout(() => toast(`Welcome, ${first(S.me.display_name)}! Tap a pin to see what's on, or drop your own`, true), 900); }
   const shared = store.get('pinnit_open_event', null);
   if (shared) { store.del('pinnit_open_event'); if (S.events.some(e => e.id === shared)) openEvent(shared); else toast('That event has finished'); }
   store.del('pinnit_ref');
@@ -1728,7 +1741,7 @@ VIEWS.event = props => {
     ${e.is_sample ? `<div class="safe-note"><i>💡</i><div><b>This is an example event.</b> It shows how Pinnit works, so nobody will be there. Try joining to see the group chat, or drop your own pin.</div></div>` : ''}
     ${fr.length ? `<div class="friends-going"><span class="stack">${fr.slice(0, 3).map(p => avatar(p.profile)).join('')}</span>${esc(first(fr[0].profile.display_name))}${fr.length > 1 ? ` and ${fr.length - 1} other friend${fr.length > 2 ? 's' : ''} are` : ' is'} going</div>` : ''}
     <div class="rows">
-      <div class="row"><div class="ri">${I.clock}</div><div><strong>${whenLabel(e, now)}</strong><span>${dayLabel(startMs(e))} ${fmtTime(startMs(e))} to ${fmtTime(endMs(e))} · ${durLabel(e.duration_mins)}</span></div></div>
+      <div class="row"><div class="ri">${I.clock}</div><div><strong>${whenLabel(e, now)}</strong><span>${fmtTime(startMs(e))} to ${fmtTime(endMs(e))} · ${durLabel(e.duration_mins)}</span></div></div>
       <div class="row"><div class="ri">${I.shield}</div><div><strong>${esc(ruleLabel(e.gender_rule))} · ${esc(agesLabel(e.age_brackets))}</strong><span class="${elig.ok ? 'good' : 'bad'}">${esc(host ? 'Who can join' : joined ? "You're in" : elig.text)}</span></div></div>
       <div class="row"><div class="ri">${I.users}</div><div><strong>${count} of ${e.max_people} going</strong><span>${full ? 'Full' : `${e.max_people - count} spot${e.max_people - count === 1 ? '' : 's'} left`}${arrivedN ? ` · ${arrivedN} here now` : ''}</span></div></div>
       ${e.skill && e.skill !== 'All levels' ? `<div class="row"><div class="ri">${I.level}</div><div><strong>${esc(e.skill)}</strong><span>Level</span></div></div>` : ''}
@@ -1745,19 +1758,21 @@ VIEWS.event = props => {
     ${accItems.length ? `<div class="acc-list">${accItems.map(x => `<span class="acc">${x.e} ${esc(x.label)}</span>`).join('')}</div>` : `<p class="muted-s">The host hasn't added access details. Ask in the group chat${joined ? '' : ' once you join'}.</p>`}
     ${venue ? `<button class="venue-link" data-venue="${esc(venue.id)}"><span class="vi">${vkindOf(venue.kind).e}</span><div><strong>${esc(venue.name)}</strong><span>${esc([venue.prices.length ? 'Prices' : '', venue.slots.length ? 'community hours' : '', 'venue info'].filter(Boolean).join(', ').replace(/^./, c => c.toUpperCase()))}</span></div>${I.back.replace('M15 5l-7 7 7 7', 'M9 5l7 7-7 7')}</button>` : ''}
     <div class="sec-t">Who's going</div>
-    <div class="people">${e.players.map(p => `<button class="pchip ${p.user_id === S.user.id ? 'me' : ''}" data-person="${esc(p.user_id)}">${avatar(p.profile)}${esc(p.user_id === S.user.id ? 'You' : first(p.profile.display_name))}${p.arrived_at ? '<i class="arr" title="Here"></i>' : ''}</button>`).join('')}</div>
+    <div class="people">${e.players.map(p => `<button class="pchip ${p.user_id === S.user.id ? 'me' : ''}" data-person="${esc(p.user_id)}">${avatar(p.profile)}${esc(p.user_id === S.user.id ? 'You' : first(p.profile.display_name))}${p.first_timer && p.user_id !== e.host_id && p.user_id !== S.user.id ? '<span class="new-tag">New</span>' : ''}${p.arrived_at ? '<i class="arr" title="Here"></i>' : ''}</button>`).join('')}</div>
+    ${host && e.players.some(p => p.first_timer && p.user_id !== e.host_id) ? '<p class="hint" style="margin-top:4px">🌱 New means it\'s their first Pinnit event. A quick hello goes a long way.</p>' : ''}
     <div class="d-actions">
-      ${primary}
+      ${joined ? primary : ''}
       ${joined && nearStart ? (sharingHere
         ? `<div class="here-box"><b>Sharing your location with the group</b>They can see you on the map until the event ends.</div><button class="btn secondary" data-act="stopShare">Stop sharing</button>`
         : `<button class="btn green" data-act="imHere">I'm here · show the group where I am</button>`) : ''}
-      ${joined ? `<button class="btn secondary" data-act="chat">${I.chat} Group chat</button>` : ''}
       <div class="btn-row">
         ${exactFor(e) ? `<a class="btn secondary" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${e.lat},${e.lng}">Directions</a>` : ''}
+        ${joined ? `<button class="btn secondary" data-act="calendar">Add to calendar</button>` : ''}
         <button class="btn secondary" data-act="share">${exactFor(e) ? 'Share' : 'Share with a friend'}</button>
       </div>
       ${host ? '' : `<button class="text-link" data-act="reportEvent">Report this event</button>`}
-    </div>`;
+    </div>
+    <div class="form-foot">${joined ? `<button class="btn primary" data-act="chat">${I.chat.replace('currentColor', '#fff')} Group chat</button>` : primary}</div>`;
 };
 AFTER.event = props => {
   const e = S.events.find(x => x.id === props.id);
@@ -2160,19 +2175,19 @@ VIEWS.venue = props => {
     </div>
     <div class="badges">
       ${open ? `<span class="vbadge open">Open for community use · until ${fmtMins(toMins(open.end_time))}</span>` : hrs ? `<span class="vbadge">${esc(hrs)}</span>` : ''}
-      ${fp ? `<span class="vbadge">From ${money(fp.price)} ${esc(unitLabel(fp.unit))}</span>` : ''}
+      ${fp ? `<span class="vbadge">${esc(priceLabel(fp))}</span>` : ''}
     </div>
     ${v.reviews.some(r => r.photo) ? `<div class="gallery">${v.reviews.filter(r => r.photo).map(r => `<img src="${esc(r.photo)}" alt="Photo of ${esc(v.name)} by ${esc(first(r.author && r.author.display_name))}" loading="lazy">`).join('')}</div>` : ''}
     ${v.description ? `<div class="notes"><b>About</b>${esc(v.description)}</div>` : ''}
     ${v.creator ? `<p class="hint" style="margin-top:10px">Added to Pinnit by ${esc(v.created_by === S.user.id ? 'you' : first(v.creator.display_name))} ${agoLabel(v.created_at)}. Thanks for helping locals.</p>` : ''}
 
-    <div class="sec-t">Community hours</div>
+    ${v.slots.length || mgr || !['park', 'field'].includes(v.kind) ? `<div class="sec-t">Community hours</div>
     ${v.slots.length ? weekChart(v) + v.slots.map(s => `<div class="slot-row"><div><strong>${esc(daysLabel(s.days))} · ${fmtMins(toMins(s.start_time))} to ${fmtMins(toMins(s.end_time))}</strong>${s.note ? `<span>${esc(s.note)}</span>` : ''}</div>${mgr ? `<button class="mini" data-delslot="${esc(s.id)}">Remove</button>` : ''}</div>`).join('')
-      : `<p class="muted-s">${mgr ? 'Post the times locals can use this space.' : v.manager_id ? "The manager hasn't posted hours yet." : 'No hours posted yet. Venue managers can share when the space is free for the community.'}</p>`}
+      : `<p class="muted-s">${mgr ? 'Post the times locals can use this space.' : v.manager_id ? "The manager hasn't posted hours yet." : 'No hours posted yet. Managers can share when the space is free for the community.'}</p>`}
     ${mgr ? `<button class="btn secondary" style="margin-top:10px" data-act="addSlot">+ Add community hours</button>` : ''}
     <div class="mgr">${v.manager_id
-      ? `<div style="flex:1">Hours posted by <b>${esc(mgr ? 'you' : (v.manager && v.manager.display_name) || 'the venue manager')}</b> · ${v.manager_verified ? 'Verified manager ✓' : 'Not yet verified'}</div>`
-      : `<div style="flex:1"><b>Run this venue?</b> Claim it to post when the space is free for locals.</div><button class="btn secondary sm" data-act="claimVenue">I manage this</button>`}</div>
+      ? `<div style="flex:1">Hours posted by <b>${esc(mgr ? 'you' : (v.manager && v.manager.display_name) || 'the manager')}</b> · ${v.manager_verified ? 'Verified manager ✓' : 'Not yet verified'}</div>`
+      : `<div style="flex:1"><b>Run this place?</b> Claim it to post when the space is free for locals.</div><button class="btn secondary sm" data-act="claimVenue">I manage this</button>`}</div>` : ''}
 
     <div class="sec-t">Prices</div>
     ${v.prices.length ? `<table class="ptable">${v.prices.map(p => `<tr><td>${esc(p.label)}<small>${esc([unitLabel(p.unit), p.note].filter(Boolean).join(' · '))}</small></td><td class="pp">${money(p.price)}</td><td class="pe"><button class="mini" data-editprice="${esc(p.id)}" aria-label="Edit ${esc(p.label)}">Edit</button></td></tr>`).join('')}</table>
@@ -2463,6 +2478,24 @@ async function run(fn, okMsg) {
   catch (e) { console.error(e); toast(friendlyError(e)); await loadAll(); }
   finally { $$('#modal .btn').forEach(b => { if (!b.matches('[disabled][data-keepdisabled]')) b.disabled = false; }); renderModal(true); }
 }
+// an .ics file opens straight in Apple Calendar, Google Calendar or Outlook
+function addToCalendar(id) {
+  const e = S.events.find(x => x.id === id); if (!e) return;
+  const stamp = ms => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const txt = s => String(s || '').replace(/[\\;,]/g, c => '\\' + c).replace(/\n/g, '\\n');
+  const url = location.origin + location.pathname + '?event=' + encodeURIComponent(e.id);
+  const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Pinnit//EN', 'BEGIN:VEVENT', 'UID:' + e.id + '@pinnit',
+    'DTSTAMP:' + stamp(Date.now()), 'DTSTART:' + stamp(startMs(e)), 'DTEND:' + stamp(endMs(e)),
+    'SUMMARY:' + txt(labelOf(e)), 'LOCATION:' + txt([e.meeting_point, e.place].filter(Boolean).join(', ')),
+    'GEO:' + e.lat + ';' + e.lng, 'DESCRIPTION:' + txt((e.notes ? e.notes + '\n\n' : '') + 'On Pinnit: ' + url), 'URL:' + url,
+    'BEGIN:VALARM', 'TRIGGER:-PT1H', 'ACTION:DISPLAY', 'DESCRIPTION:' + txt(labelOf(e)), 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }));
+  a.download = labelOf(e).replace(/[^\w -]+/g, '').trim().slice(0, 40) + '.ics';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast('Added. You get a reminder an hour before');
+}
 async function shareEvent(id) {
   const e = S.events.find(x => x.id === id); if (!e) return;
   const url = `${location.origin}${location.pathname}?event=${encodeURIComponent(e.id)}`;
@@ -2628,6 +2661,7 @@ $('#modal').addEventListener('click', async ev => {
     case 'stopShare': stopSharing(); return renderModal(true);
     case 'chat': return push('chat', { id });
     case 'share': return shareEvent(id);
+    case 'calendar': return addToCalendar(id);
     // venues
     case 'hostHere': {
       const v = S.venues.find(x => x.id === id); if (!v) return;
@@ -2719,12 +2753,22 @@ function locate(silent) {
 }
 $('#locateBtn').addEventListener('click', () => locate(false));
 
-function toggleSheet(force) {
-  const s = $('#sheet'), on = force ?? !s.classList.contains('expanded');
-  s.classList.toggle('expanded', on);
-  $('#toggleList').textContent = on ? 'Show map' : 'View list';
+// the sheet has three positions: 'full' (list), 'peek' (tabs + filters) and 'mini' (map mode)
+function setSheet(state) {
+  const s = $('#sheet');
+  if (isDesktop() && state === 'mini') state = 'peek';
+  s.classList.toggle('expanded', state === 'full');
+  s.classList.toggle('mini', state === 'mini');
+  $('#toggleList').textContent = state === 'full' ? 'Show map' : 'View list';
   updateSheetHeight();
 }
+const sheetState = () => $('#sheet').classList.contains('expanded') ? 'full' : $('#sheet').classList.contains('mini') ? 'mini' : 'peek';
+function toggleSheet(force) {
+  if (force === true) return setSheet('full');
+  if (force === false) return setSheet('peek');
+  setSheet(sheetState() === 'full' ? 'peek' : sheetState() === 'mini' ? 'peek' : 'full');
+}
+$('#hideSheet').addEventListener('click', () => setSheet('mini'));
 $('#sheet').addEventListener('click', e => {
   const c = e.target.closest('[data-cat]');
   if (c) { const id = c.dataset.cat; if (id === 'all') S.cats.clear(); else if (S.cats.has(id)) S.cats.delete(id); else S.cats.add(id); return renderAll(); }
@@ -2749,16 +2793,17 @@ $('#sheet').addEventListener('click', e => {
     dy = e.clientY - start; if (Math.abs(dy) > 6) moved = true;
     const open = sheet.classList.contains('expanded');
     // follow the finger, with a little resistance past the ends
-    const off = open ? Math.max(-20, dy) : Math.min(20, dy);
+    const st = sheetState(), off = st === 'full' ? Math.max(-20, dy) : st === 'mini' ? Math.min(20, dy) : dy;
     sheet.style.transform = moved ? `translateY(${off > 0 ? off : off / 3}px)` : '';
   };
   const up = () => {
     if (start == null) return;
     sheet.classList.remove('dragging'); sheet.style.transform = '';
     const open = sheet.classList.contains('expanded');
+    const st = sheetState();
     if (!moved) toggleSheet();
-    else if (!open && dy < -40) toggleSheet(true);
-    else if (open && dy > 60) toggleSheet(false);
+    else if (dy < -40) setSheet(st === 'mini' ? 'peek' : 'full');
+    else if (dy > 50) setSheet(st === 'full' ? 'peek' : 'mini');
     start = null;
   };
   grips.forEach(g => { g.addEventListener('pointerdown', down); g.addEventListener('pointermove', move); g.addEventListener('pointerup', up); g.addEventListener('pointercancel', up); });
@@ -2780,7 +2825,8 @@ window.addEventListener('resize', updateSheetHeight);
   const params = new URLSearchParams(location.search);
   if (params.get('ref')) store.set('pinnit_ref', params.get('ref').toUpperCase().slice(0, 8));
   if (params.get('event')) store.set('pinnit_open_event', params.get('event'));
-  if (params.has('ref') || params.has('event')) history.replaceState(null, '', location.pathname + location.hash);
+  if (params.get('place')) store.set('pinnit_open_place', params.get('place'));
+  if (params.has('ref') || params.has('event') || params.has('place')) history.replaceState(null, '', location.pathname + location.hash);
   updateSheetHeight();
   if (!configured) { showAuth(); return; }
   api = window.PINNIT_API_FACTORY();

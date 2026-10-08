@@ -153,7 +153,7 @@ async function rollSamples(db) {
 const eventOut = (e, people, parts) => ({
   ...e, is_sample: !!e.is_sample, age_brackets: parseJ(e.age_brackets), access: parseJ(e.access) || [],
   host: people.get(e.host_id) || null,
-  participants: parts.filter(p => p.event_id === e.id).map(p => ({ user_id: p.user_id, joined_at: p.joined_at, arrived_at: p.arrived_at, profile: people.get(p.user_id) || null }))
+  participants: parts.filter(p => p.event_id === e.id).map(p => ({ user_id: p.user_id, joined_at: p.joined_at, arrived_at: p.arrived_at, first_timer: !!p.first_timer, profile: people.get(p.user_id) || null }))
 });
 route('GET', '/api/events', async ({ db, me }) => {
   await rollSamples(db);
@@ -162,7 +162,7 @@ route('GET', '/api/events', async ({ db, me }) => {
   const blocked = 'SELECT blocked_id FROM blocks WHERE user_id = ?';
   const [ev, parts, people] = await db.batch([
     db.prepare(`SELECT e.* FROM events e WHERE ${live} AND e.host_id NOT IN (${blocked}) ORDER BY e.starts_at LIMIT 500`).bind(me),
-    db.prepare(`SELECT pa.* FROM participants pa JOIN events e ON e.id = pa.event_id WHERE ${live}`),
+    db.prepare(`SELECT pa.*, NOT EXISTS (SELECT 1 FROM participants x WHERE x.user_id = pa.user_id AND x.joined_at < pa.joined_at) AS first_timer FROM participants pa JOIN events e ON e.id = pa.event_id WHERE ${live}`),
     db.prepare(`SELECT ${PUBLIC} FROM profiles WHERE id IN (SELECT pa.user_id FROM participants pa JOIN events e ON e.id = pa.event_id WHERE ${live})`)
   ]);
   const map = new Map(people.results.map(p => [p.id, profileOut(p)]));
@@ -462,7 +462,7 @@ route('GET', '/api/pulse', async ({ db, me, url }) => {
   const since = url.searchParams.get('since') || now();
   const [v, joins, fr] = await db.batch([
     db.prepare("SELECT value FROM meta WHERE key = 'version'"),
-    db.prepare('SELECT pa.event_id, pa.user_id FROM participants pa JOIN events e ON e.id = pa.event_id WHERE e.host_id = ? AND pa.user_id != ? AND pa.joined_at > ?').bind(me, me, since),
+    db.prepare('SELECT pa.event_id, pa.user_id, NOT EXISTS (SELECT 1 FROM participants x WHERE x.user_id = pa.user_id AND x.joined_at < pa.joined_at) AS first_timer FROM participants pa JOIN events e ON e.id = pa.event_id WHERE e.host_id = ? AND pa.user_id != ? AND pa.joined_at > ?').bind(me, me, since),
     db.prepare('SELECT * FROM friendships WHERE (user_a = ? OR user_b = ?) AND updated_at > ?').bind(me, me, since)
   ]);
   return { version: Number(v.results[0]?.value || 0), at: now(), joins: joins.results, friendships: fr.results };
