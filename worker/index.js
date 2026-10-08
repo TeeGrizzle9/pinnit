@@ -79,6 +79,13 @@ route('POST', '/api/account', async ({ db, body }) => {
     .bind(id, await sha256(token), display_name, age_bracket, gender, code, now())]);
   return { id, token };
 }, { public: true });
+// restore an account from the backup cookie when the browser has lost its saved key
+route('GET', '/api/session', async ({ db, req }) => {
+  const m = /(?:^|;\s*)pinnit_key=([0-9a-f]{64})/.exec(req.headers.get('Cookie') || '');
+  if (!m) return { none: true };
+  const p = await db.prepare('SELECT id FROM profiles WHERE token_hash = ?').bind(await sha256(m[1])).first();
+  return p ? { id: p.id, token: m[1] } : { none: true };
+}, { public: true });
 route('GET', '/api/me', async ({ db, me }) => profileOut(await db.prepare(`SELECT ${PUBLIC}, referral_code FROM profiles WHERE id = ?`).bind(me).first()));
 route('PATCH', '/api/me', async ({ db, me, body }) => {
   const cur = await db.prepare('SELECT * FROM profiles WHERE id = ?').bind(me).first();
@@ -480,9 +487,9 @@ export default {
       const r = routes.find(r => r.method === req.method && r.re.test(url.pathname));
       if (!r) fail(404, 'Not found');
       const params = r.re.exec(url.pathname).groups || {};
-      let me = null;
+      let me = null, token = null;
       if (!r.public) {
-        const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+        token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
         if (token.length === 64) me = (await db.prepare('SELECT id FROM profiles WHERE token_hash = ?').bind(await sha256(token)).first())?.id || null;
         if (!me) fail(401, 'Please set up Pinnit again');
       }
@@ -493,7 +500,15 @@ export default {
         if (!body || typeof body !== 'object') body = {};
       }
       const out = await r.handler({ db, me, params, body, url, req });
-      return r.raw ? out : json(out);
+      if (r.raw) return out;
+      const res = json(out);
+      // Keep a server-set backup of the phone's key. Safari clears browser storage after 7 days without
+      // a visit, but not cookies the server sets, so /api/session can quietly restore the account.
+      const path = url.pathname;
+      const keep = path === '/api/account' || path === '/api/session' ? out && out.token
+        : path === '/api/me' && req.method === 'DELETE' ? '' : token;
+      if (keep != null) res.headers.append('Set-Cookie', `pinnit_key=${keep}; Path=/api; HttpOnly; Secure; SameSite=Lax; Max-Age=${keep ? 34560000 : 0}`);
+      return res;
     } catch (e) {
       if (e instanceof HttpError) return json({ error: e.message }, e.status);
       console.error(e);

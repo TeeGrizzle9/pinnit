@@ -34,7 +34,15 @@
 
   window.PINNIT_API_FACTORY = () => ({
     deviceAccount: true, cloud: true,
-    async getSession() { return sessionOf(); },
+    async getSession() {
+      if (sessionOf()) return sessionOf();
+      // the browser lost its saved key (Safari clears it after 7 days away): try the server's backup cookie
+      try {
+        const r = await req('GET', '/session');
+        if (r && r.token) { token = r.token; uid = r.id; set(TOKEN, token); set(UID, uid); }
+      } catch {}
+      return sessionOf();
+    },
     onAuth(cb) { authCbs.push(cb); },
     async createAccount(profile) {
       const r = await req('POST', '/account', profile);
