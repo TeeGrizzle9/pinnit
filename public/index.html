@@ -426,6 +426,7 @@ textarea.field{height:92px;padding:12px 14px;resize:none;line-height:1.4}
 .welcome-cats span{background:rgba(255,255,255,.16);border-radius:999px;padding:5px 10px;font-size:13px;font-weight:700}
 
 /* safety */
+.msg.pending{opacity:.6}
 .mod-note{display:flex;gap:10px;align-items:flex-start;background:var(--sun-soft);border:1.5px solid var(--sun);border-radius:14px;padding:10px 12px;margin:8px 0 2px;font-size:13px;line-height:1.45;color:#4a3a10;flex:none}
 .mod-note i{font-style:normal;font-size:18px}
 .mod-note b{display:block;font-size:14px;color:var(--ink);margin-bottom:1px}
@@ -1923,8 +1924,14 @@ AFTER.chat = async props => {
     const mod = await moderation;
     if (mod.findBadLanguage(body)) { note.innerHTML = modNoteHtml(mod.languageMessage('Your message', 'sent')); note.classList.remove('hidden'); return; }
     inp.value = ''; note.classList.add('hidden');
-    try { await api.sendMessage(props.id, body); }
+    // show it straight away while the server checks it (the AI check can take a second or two)
+    const list = $('#chatList'), pending = document.createElement('div');
+    pending.className = 'msg me pending';
+    pending.innerHTML = `<div class="bub">${esc(body)}</div><time>Sending…</time>`;
+    $('#chatEmpty')?.remove(); list.appendChild(pending); list.scrollTop = list.scrollHeight;
+    try { await api.sendMessage(props.id, body); pending.remove(); }
     catch (e) {
+      pending.remove();
       inp.value = body;
       const m = friendlyError(e);
       if (/welcoming space/.test(m)) { note.innerHTML = modNoteHtml(m); note.classList.remove('hidden'); } else toast(m);
