@@ -29,6 +29,8 @@ try { (JSON.parse(localStorage.getItem('pinnit_comfort')) || []).forEach(c => do
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
 <style>
 /* Pinnit brand: Park Green #1E9E6A, Forest Ink #10302A, Mint #F3FAF6, Sunshine #FFC94D, Nunito */
 :root{
@@ -192,6 +194,8 @@ img.avatar{background:var(--soft)}
 .vpin.sel{transform:scale(1.18)}
 .vpin.open::before{content:"";position:absolute;top:-5px;right:-5px;width:12px;height:12px;border-radius:50%;background:var(--green);border:2px solid #fff}
 .vpin .vprice{position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:3px;background:var(--ink);color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;white-space:nowrap;font-family:Nunito,sans-serif}
+.cluster{width:46px;height:46px;border-radius:50%;background:var(--green);color:#fff;font-weight:900;font-size:16px;display:grid;place-items:center;border:4px solid #fff;box-shadow:0 0 0 6px rgba(30,158,106,.25),0 3px 10px rgba(0,0,0,.25);font-family:Nunito,sans-serif}
+.cluster.live{box-shadow:0 0 0 6px rgba(30,158,106,.25),0 0 0 9px rgba(255,201,77,.6),0 3px 10px rgba(0,0,0,.25)}
 .chip .cdot{width:10px;height:10px;border-radius:50%;background:var(--c);flex:none}
 .chip.on .cdot{box-shadow:0 0 0 2px #fff}
 @keyframes pulse{0%{transform:scale(.8);opacity:1}100%{transform:scale(1.5);opacity:0}}
@@ -482,7 +486,7 @@ html.contrast .leaflet-tile-pane{filter:contrast(1.15) saturate(.9)}
 html.calm *,html.calm *::before,html.calm *::after{animation:none!important;transition:none!important}
 html.calm .pin.live::before{display:none}
 
-.toast{position:fixed;z-index:2000;left:50%;top:calc(76px + var(--safe-t));transform:translate(-50%,-20px);background:var(--ink);color:#fff;padding:12px 18px;border-radius:999px;font-size:14px;font-weight:600;opacity:0;pointer-events:none;transition:all .25s;box-shadow:var(--shadow);max-width:calc(100vw - 32px);text-align:center}
+.toast{position:fixed;z-index:2000;left:50%;top:calc(14px + var(--safe-t));transform:translate(-50%,-20px);background:var(--ink);color:#fff;padding:12px 18px;border-radius:999px;font-size:14px;font-weight:600;opacity:0;pointer-events:none;transition:all .25s;box-shadow:var(--shadow);max-width:calc(100vw - 32px);text-align:center}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 .spinner{width:22px;height:22px;border-radius:50%;border:3px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -492,7 +496,7 @@ html.calm .pin.live::before{display:none}
   .topbar{left:436px;right:20px;top:20px}
   .leaflet-top{top:0}
   .sheet{left:20px;top:20px;bottom:20px;right:auto;width:400px;max-height:none;border-radius:22px;padding:20px;box-shadow:var(--shadow)}
-  .sheet .handle,#toggleList{display:none}
+  .sheet .handle,#toggleList,#hideSheet{display:none}
   .sheet .seg{display:flex!important}
   .sheet .list{display:block!important}
   .chips{margin:0 -20px 10px;padding:0 20px}
@@ -891,6 +895,10 @@ function webglOK() { try { const c = document.createElement('canvas'); return !!
 map.attributionControl.setPrefix(false);
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 const markerLayer = L.layerGroup().addTo(map);
+const eventLayer = (L.markerClusterGroup ? L.markerClusterGroup({
+  maxClusterRadius: 42, disableClusteringAtZoom: 16, showCoverageOnHover: false, spiderfyOnMaxZoom: true,
+  iconCreateFunction: c => { const n = c.getChildCount(), live = c.getAllChildMarkers().some(m => m.options.live); return L.divIcon({ className: '', iconSize: [46, 46], html: `<div class="cluster ${live ? 'live' : ''}" aria-label="${n} events here, tap to zoom in">${n}</div>` }); }
+}) : L.layerGroup()).addTo(map);
 const checkinLayer = L.layerGroup().addTo(map);
 let meMarker = null;
 const isDesktop = () => window.matchMedia('(min-width:900px)').matches;
@@ -1118,7 +1126,7 @@ function renderSheet(list) {
 }
 const VENUE_ZOOM = 15;
 function renderMarkers(list) {
-  markerLayer.clearLayers();
+  markerLayer.clearLayers(); eventLayer.clearLayers();
   const now = Date.now();
   if (S.tab !== 'venues') list.forEach(e => {
     const st = statusOf(e, now), cat = catById(catOf(e));
@@ -1126,8 +1134,8 @@ function renderMarkers(list) {
       className: '', iconSize: [40, 48], iconAnchor: [20, 48],
       html: `<div class="pin ${st} ${S.selectedId === e.id ? 'sel' : ''} ${isIn(e) ? 'mine' : ''}" style="--c:${cat.c}">${iconOf(e)}<span class="count">${e.players.length}/${e.max_people}</span></div>`
     });
-    L.marker(shownLL(e), { icon, riseOnHover: true, zIndexOffset: st === 'live' ? 500 : 0, title: `${labelOf(e)} · ${cat.label}`, alt: labelOf(e), keyboard: true })
-      .on('click', () => openEvent(e.id)).addTo(markerLayer);
+    L.marker(shownLL(e), { icon, riseOnHover: true, live: st === 'live', zIndexOffset: st === 'live' ? 500 : 0, title: `${labelOf(e)} · ${cat.label}`, alt: labelOf(e), keyboard: true })
+      .on('click', () => openEvent(e.id)).addTo(eventLayer);
   });
   // venues: always on the Venues tab, and as quiet context on Explore once zoomed in
   const showVenues = S.tab === 'venues' || (S.tab === 'explore' && map.getZoom() >= VENUE_ZOOM);
@@ -1530,7 +1538,7 @@ function teardown() {
   closeAll(true);
   if (S.globalUnsub) { S.globalUnsub(); S.globalUnsub = null; }
   Object.assign(S, { user: null, me: null, events: [], friends: new Map(), people: new Map(), tab: 'explore', recent: null });
-  markerLayer.clearLayers(); checkinLayer.clearLayers();
+  markerLayer.clearLayers(); eventLayer.clearLayers(); checkinLayer.clearLayers();
 }
 
 /* =====================================================================
@@ -2618,7 +2626,7 @@ $('#modal').addEventListener('click', async ev => {
     case 'join':
       if (api.deviceAccount && !store.get(FIRST_KEY, false) && S.progress && !S.progress.history.length) return push('firstTime', { id });
       return run(() => api.join(id), "You're in. See you there");
-    case 'joinFirst': store.set(FIRST_KEY, true); back(); return run(() => api.join(id), "You're in. The exact spot is now on your map");
+    case 'joinFirst': store.set(FIRST_KEY, true); back(); return run(() => api.join(id), "You're in. The meeting point is now showing");
     case 'reportEvent': return push('report', { kind: 'event', id });
     case 'sendReport': {
       syncForms();
