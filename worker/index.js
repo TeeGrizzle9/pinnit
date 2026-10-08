@@ -10,20 +10,45 @@ import { findBadLanguage, languageMessage } from '../public/moderation.js';
 // slurs and sexual terms even when disguised), then Cloudflare's Llama Guard model for things a word
 // list misses, like sexual suggestions or threats in ordinary words. If the AI is unavailable the
 // word filter still applies. Blocked attempts are logged in moderation_log for the team to review.
+const withLimit = (p, ms) => Promise.race([p, new Promise(r => setTimeout(() => r(null), ms))]).catch(() => null);
+// Llama Guard: built for harmful content (threats, sexual content, hate, crime)
+async function llamaGuard(AI, text) {
+  try {
+    const r = await AI.run('@cf/meta/llama-guard-3-8b', { messages: [{ role: 'user', content: text.slice(0, 1500) }] });
+    const out = r && (r.response ?? r.result?.response ?? r);
+    const unsafe = typeof out === 'object' ? out.safe === false : /unsafe/i.test(String(out));
+    const cats = typeof out === 'object' ? (out.categories || []) : String(out).match(/S\d+/g) || [];
+    const hit = cats.map(c => String(c).toUpperCase()).find(c => AI_BLOCK[c]);
+    return unsafe && hit ? AI_BLOCK[hit] : null;
+  } catch (e) { console.warn('Llama Guard unavailable', e && e.message); return null; }
+}
+// Pinnit's own house rules, stricter than Llama Guard: any sexual reference, innuendo, hookup or
+// "come to mine" invitation, insults and slurs. Normal sport and activity talk is explicitly allowed.
+const HOUSE_RULES = `You moderate Pinnit, a community app where adults (18+) who may be strangers organise public meetups: sport, crafts, music, walks, games. Decide if the user's text is OK to show to everyone.
+BLOCK if it contains ANY of: sexual words or references (even a single word like "orgy"), innuendo, flirting aimed at sex, hookup or dating requests, asking for photos of people, body or appearance comments of a sexual nature; profanity or slurs, including disguised spellings; insults, bullying or harassment; threats or intimidation; hate or discrimination; selling or promoting illegal drugs; invitations to meet at someone's home or somewhere private instead of the public spot.
+ALLOW: normal friendly chat and plans, sport and competition talk ("we killed it", "smash them", "shoot hoops", "beat the other team"), mild words like damn, bloody, crap, health and safety information, mentions of mixed or same-sex teams.
+Reply with JSON only: {"block": true or false, "reason": "2 to 4 words"}`;
+async function houseRules(AI, text) {
+  for (const model of ['@cf/meta/llama-3.1-8b-instruct-fp8', '@cf/meta/llama-3.2-3b-instruct']) {
+    try {
+      const r = await AI.run(model, { messages: [{ role: 'system', content: HOUSE_RULES }, { role: 'user', content: 'Text to check:\n"""\n' + text.slice(0, 1500) + '\n"""' }], max_tokens: 40, temperature: 0 });
+      const out = String(r && (r.response ?? r.result?.response ?? '')), m = out.match(/\{[\s\S]*?\}/);
+      if (!m) continue;
+      const j = JSON.parse(m[0]);
+      return j.block === true || j.block === 'true' ? 'house rules: ' + String(j.reason || 'not allowed').slice(0, 40) : null;
+    } catch (e) { console.warn('House rules check unavailable on', model, e && e.message); }
+  }
+  return null;
+}
 const AI_BLOCK = { S1: 'violence', S2: 'crime', S3: 'sexual crime', S4: 'child safety', S10: 'hate', S12: 'sexual content' };
 async function moderate(ctx, what, ...texts) {
   const text = texts.filter(Boolean).join('\n').trim();
   if (!text) return;
   let reason = findBadLanguage(text) ? 'language' : null;
-  if (!reason && ctx.env.AI && text.length > 2) {
-    try {
-      const r = await ctx.env.AI.run('@cf/meta/llama-guard-3-8b', { messages: [{ role: 'user', content: text.slice(0, 1500) }] });
-      const out = r && (r.response ?? r.result?.response ?? r);
-      const unsafe = typeof out === 'object' ? out.safe === false : /unsafe/i.test(String(out));
-      const cats = typeof out === 'object' ? (out.categories || []) : String(out).match(/S\d+/g) || [];
-      const hit = cats.map(c => String(c).toUpperCase()).find(c => AI_BLOCK[c]);
-      if (unsafe && hit) reason = AI_BLOCK[hit];
-    } catch (e) { console.warn('AI moderation unavailable', e && e.message); }
+  if (!reason && ctx.env.AI && text.length > 1) {
+    // both AI checks run at once; each gives up after 5 s so a slow model never holds a message for long
+    const [guard, house] = await Promise.all([withLimit(llamaGuard(ctx.env.AI, text), 5000), withLimit(houseRules(ctx.env.AI, text), 5000)]);
+    reason = guard || house || null;
   }
   if (!reason) return;
   try {
