@@ -5,6 +5,7 @@
 import { ensureReady } from './setup.js';
 import { checkSpot, inSydney, SPOT_MESSAGES } from '../public/spot-rules.js';
 import { findBadLanguage, languageMessage } from '../public/moderation.js';
+import { computeRewards, recalc, CANCEL_HOURS } from './rewards.js';
 
 // Language check on anything other people will read. First a word filter (instant, catches swearing,
 // slurs and sexual terms even when disguised), then Cloudflare's Llama Guard model for things a word
@@ -86,7 +87,7 @@ const VKINDS = ['pool', 'court', 'field', 'park', 'hall', 'school', 'gym', 'stud
 const UNITS = ['entry', 'hour', 'session', 'pass', 'month', 'year'];
 const REPORT_KINDS = ['person', 'event', 'review'];
 const FEELS = ['yes', 'unsure', 'no'];
-const PUBLIC = 'id, display_name, avatar_url, age_bracket, gender, bio, is_sample, created_at';
+const PUBLIC = 'id, display_name, avatar_url, age_bracket, gender, bio, is_sample, points, created_at';
 const H = 3600e3, D = 864e5;
 
 /* ---------- helpers ---------- */
@@ -133,6 +134,7 @@ route('POST', '/api/account', async ctx => {
   for (let i = 0; i < 5 && await db.prepare('SELECT 1 FROM profiles WHERE referral_code = ?').bind(code).first(); i++) code = refCode();
   await write(db, [db.prepare('INSERT INTO profiles (id, token_hash, display_name, age_bracket, gender, bio, referral_code, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)')
     .bind(id, await sha256(token), display_name, age_bracket, gender, code, now())]);
+  await recordInvite(db, id, body.ref, body.event);
   return { id, token };
 }, { public: true });
 // Recovery codes: 12 characters from an alphabet with no look-alikes (no O/0, I/1), shown as XXXX-XXXX-XXXX.
@@ -159,6 +161,17 @@ route('POST', '/api/recover', async ({ db, body, req }) => {
   await db.prepare('UPDATE profiles SET token_hash = ? WHERE id = ?').bind(await sha256(token), p.id).run();
   return { id: p.id, token };
 }, { public: true });
+// who brought whom: from an invite code or a shared event link. Each new player can only be brought by
+// one person, and only before their first checked-in game.
+async function recordInvite(db, invitee, ref, eventId) {
+  const code = String(ref || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{4,8}$/.test(code)) return;
+  const inviter = await db.prepare('SELECT id FROM profiles WHERE referral_code = ? AND is_sample = 0').bind(code).first('id');
+  if (!inviter || inviter === invitee) return;
+  const played = await db.prepare('SELECT 1 FROM participants p JOIN events e ON e.id = p.event_id WHERE p.user_id = ? AND p.arrived_at IS NOT NULL AND e.is_sample = 0 LIMIT 1').bind(invitee).first();
+  if (played) return;
+  await db.prepare('INSERT OR IGNORE INTO invites (invitee_id, inviter_id, event_id, created_at) VALUES (?, ?, ?, ?)').bind(invitee, inviter, eventId ? String(eventId).slice(0, 64) : null, now()).run();
+}
 // restore an account from the backup cookie when the browser has lost its saved key
 route('GET', '/api/session', async ({ db, req }) => {
   const m = /(?:^|;\s*)pinnit_key=([0-9a-f]{64})/.exec(req.headers.get('Cookie') || '');
@@ -195,6 +208,8 @@ route('DELETE', '/api/me', async ({ db, me }) => {
     db.prepare('DELETE FROM blocks WHERE user_id = ? OR blocked_id = ?').bind(me, me),
     db.prepare('DELETE FROM safety WHERE user_id = ?').bind(me),
     db.prepare('DELETE FROM badges WHERE user_id = ?').bind(me),
+    db.prepare('DELETE FROM invites WHERE invitee_id = ? OR inviter_id = ?').bind(me, me),
+    db.prepare('DELETE FROM cancellations WHERE user_id = ?').bind(me),
     db.prepare('UPDATE reports SET reporter_id = NULL WHERE reporter_id = ?').bind(me),
     db.prepare('UPDATE venues SET manager_id = NULL, manager_verified = 0 WHERE manager_id = ?').bind(me),
     db.prepare('DELETE FROM profiles WHERE id = ?').bind(me)
@@ -308,7 +323,7 @@ route('DELETE', '/api/events/:id', async ({ db, me, params }) => {
   await write(db, ['participants', 'messages', 'checkins'].map(t => db.prepare(`DELETE FROM ${t} WHERE event_id = ?`).bind(e.id)).concat(db.prepare('DELETE FROM events WHERE id = ?').bind(e.id)));
   return { ok: true };
 });
-route('POST', '/api/events/:id/join', async ({ db, me, params }) => {
+route('POST', '/api/events/:id/join', async ({ db, me, params, body }) => {
   const e = await getEvent(db, params.id);
   if (Date.parse(e.starts_at) + e.duration_mins * 60e3 < Date.now()) fail(400, 'This event has finished');
   const prof = await db.prepare('SELECT age_bracket, gender FROM profiles WHERE id = ?').bind(me).first();
@@ -318,15 +333,37 @@ route('POST', '/api/events/:id/join', async ({ db, me, params }) => {
   if (await db.prepare('SELECT 1 FROM blocks WHERE user_id = ? AND blocked_id = ?').bind(e.host_id, me).first()) fail(403, "You can't join this event");
   const n = await countSince(db, 'SELECT COUNT(*) AS n FROM participants WHERE event_id = ?', e.id);
   if (n >= e.max_people && !await isParticipant(db, e.id, me)) fail(409, 'This event is full');
-  await write(db, [db.prepare('INSERT OR IGNORE INTO participants (event_id, user_id, joined_at) VALUES (?, ?, ?)').bind(e.id, me, now())]);
+  await write(db, [db.prepare('INSERT OR IGNORE INTO participants (event_id, user_id, joined_at) VALUES (?, ?, ?)').bind(e.id, me, now()),
+    // remember the moment a game fills, so later dropouts don't take the host's reward away
+    db.prepare('UPDATE events SET filled_at = COALESCE(filled_at, ?) WHERE id = ? AND (SELECT COUNT(*) FROM participants WHERE event_id = ?) >= max_people').bind(now(), e.id, e.id)]);
+  if (body && body.ref) await recordInvite(db, me, body.ref, e.id);
   return { ok: true };
 });
 route('DELETE', '/api/events/:id/join', async ({ db, me, params }) => {
-  await write(db, [db.prepare('DELETE FROM participants WHERE event_id = ? AND user_id = ?').bind(params.id, me), db.prepare('DELETE FROM checkins WHERE event_id = ? AND user_id = ?').bind(params.id, me)]);
-  return { ok: true };
+  const row = await db.prepare('SELECT p.joined_at, e.starts_at, e.host_id, e.is_sample FROM participants p JOIN events e ON e.id = p.event_id WHERE p.event_id = ? AND p.user_id = ?').bind(params.id, me).first();
+  const hoursAhead = row ? (Date.parse(row.starts_at) - Date.now()) / 3600e3 : 0;
+  const credit = !!row && !row.is_sample && row.host_id !== me && hoursAhead >= CANCEL_HOURS && Date.now() - Date.parse(row.joined_at) > 3600e3;
+  await write(db, [db.prepare('DELETE FROM participants WHERE event_id = ? AND user_id = ?').bind(params.id, me), db.prepare('DELETE FROM checkins WHERE event_id = ? AND user_id = ?').bind(params.id, me),
+    ...(credit ? [db.prepare('INSERT OR IGNORE INTO cancellations (user_id, event_id, hours_ahead, at) VALUES (?, ?, ?, ?)').bind(me, params.id, hoursAhead, now())] : [])]);
+  if (credit) await recalc(db, [me]);
+  return { ok: true, credit };
 });
-route('POST', '/api/events/:id/arrived', async ({ db, me, params }) => {
-  await write(db, [db.prepare('UPDATE participants SET arrived_at = ? WHERE event_id = ? AND user_id = ?').bind(now(), params.id, me)]);
+route('POST', '/api/events/:id/arrived', async ({ db, me, params, body }) => {
+  const e = await getEvent(db, params.id);
+  const p = await db.prepare('SELECT arrived_at FROM participants WHERE event_id = ? AND user_id = ?').bind(e.id, me).first();
+  if (!p) fail(403, 'Join the event first');
+  if (p.arrived_at) return { ok: true, already: true };
+  const start = Date.parse(e.starts_at), end = start + e.duration_mins * 60e3;
+  if (Date.now() < start - 30 * 60e3) fail(400, 'Check-in opens 30 minutes before the start');
+  if (Date.now() > end + 30 * 60e3) fail(400, 'This event has finished');
+  const lat = Number(body.lat), lng = Number(body.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) fail(400, 'Turn on location so we can check you in');
+  const metres = Math.hypot((lat - e.lat) * 111320, (lng - e.lng) * 111320 * Math.cos(e.lat * Math.PI / 180));
+  if (metres > 250) fail(400, `You look about ${metres > 1500 ? (metres / 1000).toFixed(1) + ' km' : Math.round(metres / 10) * 10 + ' m'} away. Check in when you get there`);
+  await write(db, [db.prepare('UPDATE participants SET arrived_at = ? WHERE event_id = ? AND user_id = ?').bind(now(), e.id, me)]);
+  // everyone at this game (and whoever brought them) may have earned points now
+  const { results } = await db.prepare('SELECT user_id FROM participants WHERE event_id = ? UNION SELECT inviter_id FROM invites WHERE invitee_id IN (SELECT user_id FROM participants WHERE event_id = ?)').bind(e.id, e.id).all();
+  await recalc(db, results.map(r => r.user_id));
   return { ok: true };
 });
 // group chat: only people in the event can read or post
@@ -515,6 +552,7 @@ route('GET', '/api/safety', async ({ db, me }) => (await db.prepare('SELECT even
 route('POST', '/api/safety', async ({ db, me, body }) => {
   await db.prepare('INSERT OR REPLACE INTO safety (user_id, event_id, feel, note, created_at) VALUES (?, ?, ?, ?, ?)')
     .bind(me, String(body.event_id), body.feel == null ? null : oneOf(body.feel, FEELS, 'answer'), str(body.note, 500, { name: 'note' }), now()).run();
+  if (body.feel != null) await recalc(db, [me]);
   return { ok: true };
 });
 route('POST', '/api/reports', async ({ db, me, body }) => {
@@ -553,6 +591,11 @@ route('GET', '/api/progress', async ({ db, me }) => {
     db.prepare('SELECT (SELECT COUNT(*) FROM venues WHERE created_by = ?) + (SELECT COUNT(*) FROM venue_prices WHERE created_by = ? OR updated_by = ?) AS n').bind(me, me, me)
   ]);
   return { reviews: rv.results[0].n, badges: bd.results.map(b => b.badge_id), places: pl.results[0].n };
+});
+route('GET', '/api/rewards', async ({ db, me }) => {
+  const r = await computeRewards(db, me);
+  await db.prepare('UPDATE profiles SET points = ? WHERE id = ?').bind(r.points, me).run();
+  return r;
 });
 route('POST', '/api/badges', async ({ db, me, body }) => {
   const ids = Array.isArray(body.ids) ? body.ids.filter(x => /^[a-z]{2,16}$/.test(x)).slice(0, 20) : [];

@@ -275,6 +275,36 @@ textarea.field{height:92px;padding:12px 14px;resize:none;line-height:1.4}
 .pchip .avatar{width:28px;height:28px;font-size:10px}
 .pchip.me .avatar{outline:2px solid var(--green)}
 .pchip .arr{width:8px;height:8px;border-radius:50%;background:var(--green)}
+.lvl{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 11px;font-size:13px;font-weight:800;margin-top:6px}
+.lvl-rookie{background:#e5f5ec;color:var(--green-d)}
+.lvl-regular{background:var(--sun-soft);color:#6b4d00}
+.lvl-legend{background:var(--ink);color:var(--sun)}
+.avatar.lvl-av{font-size:44px;letter-spacing:0}
+.stack .avatar.lvl-av,.pchip .avatar.lvl-av{font-size:14px}
+.pchip .lv-e{font-size:12px}
+.rw-card{border-radius:20px;padding:16px;margin-top:14px;background:linear-gradient(135deg,#e9f7ef,#f3faf6)}
+.rw-card.lvl-regular{background:linear-gradient(135deg,#fff3d1,#fffaf0)}
+.rw-card.lvl-legend{background:linear-gradient(135deg,#10302A,#1d4a40);color:#fff}
+.rw-top{display:flex;align-items:center;gap:12px}
+.rw-em{font-size:38px;line-height:1}
+.rw-top small{display:block;font-size:12px;opacity:.75;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+.rw-top b{font-size:22px;font-weight:900}
+.rw-pts{margin-left:auto;text-align:right}
+.rw-pts b{display:block;font-size:26px;line-height:1}
+.rw-bar{height:9px;border-radius:9px;background:rgba(16,48,42,.12);overflow:hidden;margin:12px 0 8px}
+.rw-card.lvl-legend .rw-bar{background:rgba(255,255,255,.2)}
+.rw-bar span{display:block;height:100%;border-radius:9px;background:var(--green)}
+.rw-card.lvl-regular .rw-bar span{background:#e0a400}
+.rw-card.lvl-legend .rw-bar span{background:var(--sun)}
+.rw-card p{margin:0;font-size:13px;opacity:.85}
+.rw-how{background:var(--soft);border-radius:14px;padding:4px 14px;margin-top:10px}
+.rw-how summary{cursor:pointer;font-weight:800;font-size:14px;padding:10px 0;list-style-position:inside}
+.rw-row{display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--line)}
+.rw-row i{font-style:normal;font-size:20px;flex:none}
+.rw-row div{flex:1;min-width:0}
+.rw-row b{display:block;font-size:14px}
+.rw-row span{display:block;font-size:12px;color:var(--muted)}
+.rw-row em{font-style:normal;font-weight:900;color:var(--green-d);flex:none}
 .pchip .new-tag{font-size:10.5px;font-weight:800;background:var(--sun);color:var(--ink);border-radius:999px;padding:1px 6px}
 .host-card{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:var(--soft);border-radius:14px;padding:12px;margin:14px 0 4px}
 .host-card .avatar{width:44px;height:44px;font-size:15px}
@@ -795,6 +825,13 @@ function km(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 const distLabel = d => d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(1)} km`;
+// Rewards levels: Rookie, Regular, Local Legend (points are worked out on the server)
+const LEVELS = [{ id: 'rookie', label: 'Rookie', e: '🌱', min: 0 }, { id: 'regular', label: 'Regular', e: '⭐', min: 100 }, { id: 'legend', label: 'Local Legend', e: '🏆', min: 300 }];
+const levelOf = pts => [...LEVELS].reverse().find(l => (+pts || 0) >= l.min);
+const nextLevel = pts => LEVELS.find(l => l.min > (+pts || 0)) || null;
+const levelChip = p => p && !p.is_sample ? `<span class="lvl lvl-${levelOf(p.points).id}">${levelOf(p.points).e} ${levelOf(p.points).label}</span>` : '';
+// on profiles the level stands in for a photo: no photo shows the level emblem instead of initials
+const heroAvatar = p => p && !p.avatar_url && !p.is_sample ? `<span class="avatar lvl-av lvl-${levelOf(p.points).id}" aria-label="${levelOf(p.points).label}">${levelOf(p.points).e}</span>` : avatar(p);
 function avatar(p, cls = '') {
   if (p && p.avatar_url) return `<img class="avatar ${cls}" src="${esc(p.avatar_url)}" alt="${esc(p.display_name || '')}" loading="lazy">`;
   return `<span class="avatar ${cls}">${esc(initials(p && p.display_name))}</span>`;
@@ -1429,7 +1466,8 @@ async function onboardingClick(e) {
       b.disabled = true; b.innerHTML = '<span class="spinner"></span>';
       try {
         store.set('pinnit_welcome', true);
-        await api.createAccount({ display_name: ob.name, age_bracket: bracketFor(+ob.age), gender: ob.gender || 'prefer_not' });
+        const inv = store.get('pinnit_invite', null);
+        await api.createAccount({ display_name: ob.name, age_bracket: bracketFor(+ob.age), gender: ob.gender || 'prefer_not', ref: inv && inv.ref, event: inv && inv.event });
         const ref = store.get('pinnit_ref', '');
         if (ref) api.addFriendByCode(ref).catch(() => {});
       } catch (err) { ob.err = friendlyError(err); renderOnboarding(); }
@@ -1622,19 +1660,20 @@ VIEWS.profile = () => {
   const recent = S.recent;
   return `${head('Profile')}
     <div class="p-hero">
-      <button class="p-photo" data-photo aria-label="Change photo">${avatar(me)}<span class="cam">${I.cam}</span></button>
-      <h2>${esc(me.display_name)}</h2>
+      <button class="p-photo" data-photo aria-label="Change photo">${heroAvatar(me)}<span class="cam">${I.cam}</span></button>
+      <h2>${esc(me.display_name)}</h2>${levelChip(me)}
       <p>${esc([me.age_bracket ? me.age_bracket.replace('-', '–') : 'No age range', me.gender !== 'prefer_not' ? genderLabel(me.gender) : ''].filter(Boolean).join(' · '))}</p>
       ${me.bio ? `<p class="bio">${esc(me.bio)}</p>` : ''}
     </div>
     <div class="stats"><div class="stat"><b>${friends.length}</b><span>Friends</span></div><div class="stat"><b>${hosted}</b><span>Hosting</span></div><div class="stat"><b>${going}</b><span>Going</span></div></div>
     <div class="btn-row" style="margin-top:12px"><button class="btn secondary" data-act="editProfile">Edit profile</button></div>
     ${api.makeRecoveryCode ? recoveryCard() : ''}
+    ${S.rewards ? rewardsHtml(S.rewards) : ''}
     ${S.progress ? progressHtml(S.progress) : ''}
 
     <div class="invite">
       <h4>Bring your people</h4>
-      <p>Share your link. Anyone who signs up with it is added as your friend automatically.</p>
+      <p>Share your link. Anyone who signs up with it becomes your friend, and when they turn up to the same game as you, you both get +15 points.</p>
       <div class="code">${esc(me.referral_code || '······')}</div>
       <div class="btn-row"><button class="btn green" data-act="shareInvite">Share invite</button><button class="btn secondary" data-act="copyCode">Copy code</button></div>
     </div>
@@ -1680,6 +1719,7 @@ function recoveryCard() {
 }
 AFTER.profile = (props, soft) => {
   if (!soft && api.recoveryStatus) api.recoveryStatus().then(saved => { S.recovery = { ...(S.recovery || {}), saved }; const t = S.stack[S.stack.length - 1]; if (t && t.kind === 'profile') renderModal(true); }).catch(() => {});
+  if (!soft && api.rewards) api.rewards().then(r => { S.rewards = r; if (S.me) S.me.points = r.points; const t = S.stack[S.stack.length - 1]; if (t && t.kind === 'profile') renderModal(true); }).catch(() => {});
   if (!soft && api.blocks) api.blocks().then(b => { S.blocked = b; const t = S.stack[S.stack.length - 1]; if (t && t.kind === 'profile') renderModal(true); });
   if (!soft && S.recent == null) api.recentPlayers().then(r => { S.recent = r || []; const t = S.stack[S.stack.length - 1]; if (t && t.kind === 'profile') renderModal(true); }).catch(e => { console.error(e); S.recent = []; });
   const form = $('#codeForm');
@@ -1708,7 +1748,7 @@ VIEWS.person = props => {
   else action = `<div class="btn-row"><button class="btn primary" data-accept="${esc(id)}">Accept request</button><button class="btn secondary" data-decline="${esc(id)}">Decline</button></div>`;
   return `${head('')}
     ${p.is_sample ? '<div class="safe-note" style="margin-top:0"><i>💡</i><div><b>Example profile.</b> Made up to show how Pinnit works.</div></div>' : ''}
-    <div class="p-hero">${avatar(p)}<h2>${esc(p.display_name)}</h2>
+    <div class="p-hero">${heroAvatar(p)}<h2>${esc(p.display_name)}</h2>${levelChip(p)}
       <p>${esc([p.age_bracket ? p.age_bracket.replace('-', '–') : '', p.gender && p.gender !== 'prefer_not' ? genderLabel(p.gender) : ''].filter(Boolean).join(' · '))}</p>
       ${p.bio ? `<p class="bio">${esc(p.bio)}</p>` : ''}</div>
     <div class="d-actions">${action}</div>
@@ -1788,6 +1828,8 @@ VIEWS.event = props => {
   else if (!elig.ok) primary = `<button class="btn primary" disabled>${esc(elig.text)}</button>`;
   else primary = `<button class="btn primary" data-act="join">Join · ${e.max_people - count} spot${e.max_people - count === 1 ? '' : 's'} left</button>`;
   const arrivedN = e.players.filter(p => p.arrived_at).length;
+  const mine = e.players.find(p => p.user_id === S.user.id), arrived = !!(mine && mine.arrived_at);
+  const canCheck = joined && now >= startMs(e) - 30 * 60000 && now <= endMs(e) + 30 * 60000;
   return `<div class="grab"></div>
     <div class="d-head">
       ${S.stack.length > 1 ? `<button class="x" data-back aria-label="Back">${I.back}</button>` : ''}
@@ -1813,19 +1855,18 @@ VIEWS.event = props => {
       ${noise ? `<div class="row"><div class="ri" style="font-size:17px">${noise.e}</div><div><strong>${esc(noise.label)}</strong><span>Noise level · ${esc(noise.sub)}</span></div></div>` : ''}
     </div>
     <div class="bar ${full ? 'full' : ''}"><span style="width:${Math.min(100, count / e.max_people * 100)}%"></span></div>
-    <button class="host-card" data-person="${esc(e.host_id)}">${avatar(e.host)}<div><strong>Started by ${esc(host ? 'you' : (e.host && e.host.display_name) || 'Host')}</strong><span>${esc([e.host && e.host.age_bracket ? e.host.age_bracket.replace('-', '–') : '', isFriend(e.host_id) ? 'Friend' : ''].filter(Boolean).join(' · ') || 'Host')}</span></div>${I.back.replace('M15 5l-7 7 7 7', 'M9 5l7 7-7 7')}</button>
+    <button class="host-card" data-person="${esc(e.host_id)}">${avatar(e.host)}<div><strong>Started by ${esc(host ? 'you' : (e.host && e.host.display_name) || 'Host')}</strong><span>${esc([e.host && !e.host.is_sample ? levelOf(e.host.points).e + ' ' + levelOf(e.host.points).label : '', e.host && e.host.age_bracket ? e.host.age_bracket.replace('-', '–') : '', isFriend(e.host_id) ? 'Friend' : ''].filter(Boolean).join(' · ') || 'Host')}</span></div>${I.back.replace('M15 5l-7 7 7 7', 'M9 5l7 7-7 7')}</button>
     ${e.notes ? `<div class="notes"><b>Notes</b>${esc(e.notes)}</div>` : ''}
     <div class="sec-t">Accessibility and comfort</div>
     ${accItems.length ? `<div class="acc-list">${accItems.map(x => `<span class="acc">${x.e} ${esc(x.label)}</span>`).join('')}</div>` : `<p class="muted-s">The host hasn't added access details. Ask in the group chat${joined ? '' : ' once you join'}.</p>`}
     ${venue ? `<button class="venue-link" data-venue="${esc(venue.id)}"><span class="vi">${vkindOf(venue.kind).e}</span><div><strong>${esc(venue.name)}</strong><span>${esc([venue.prices.length ? 'Prices' : '', venue.slots.length ? 'community hours' : '', 'venue info'].filter(Boolean).join(', ').replace(/^./, c => c.toUpperCase()))}</span></div>${I.back.replace('M15 5l-7 7 7 7', 'M9 5l7 7-7 7')}</button>` : ''}
     <div class="sec-t">Who's going</div>
-    <div class="people">${e.players.map(p => `<button class="pchip ${p.user_id === S.user.id ? 'me' : ''}" data-person="${esc(p.user_id)}">${avatar(p.profile)}${esc(p.user_id === S.user.id ? 'You' : first(p.profile.display_name))}${p.first_timer && p.user_id !== e.host_id && p.user_id !== S.user.id ? '<span class="new-tag">New</span>' : ''}${p.arrived_at ? '<i class="arr" title="Here"></i>' : ''}</button>`).join('')}</div>
+    <div class="people">${e.players.map(p => `<button class="pchip ${p.user_id === S.user.id ? 'me' : ''}" data-person="${esc(p.user_id)}">${avatar(p.profile)}${esc(p.user_id === S.user.id ? 'You' : first(p.profile.display_name))}${p.profile && !p.profile.is_sample && levelOf(p.profile.points).id !== 'rookie' ? `<span class="lv-e" title="${levelOf(p.profile.points).label}">${levelOf(p.profile.points).e}</span>` : ''}${p.first_timer && p.user_id !== e.host_id && p.user_id !== S.user.id ? '<span class="new-tag">New</span>' : ''}${p.arrived_at ? '<i class="arr" title="Here"></i>' : ''}</button>`).join('')}</div>
     ${host && e.players.some(p => p.first_timer && p.user_id !== e.host_id) ? '<p class="hint" style="margin-top:4px">🌱 New means it\'s their first Pinnit event. A quick hello goes a long way.</p>' : ''}
     <div class="d-actions">
       ${joined ? primary : ''}
-      ${joined && nearStart ? (sharingHere
-        ? `<div class="here-box"><b>Sharing your location with the group</b>They can see you on the map until the event ends.</div><button class="btn secondary" data-act="stopShare">Stop sharing</button>`
-        : `<button class="btn green" data-act="imHere">I'm here · show the group where I am</button>`) : ''}
+      ${canCheck && !arrived ? `<button class="btn green" data-act="checkIn">📍 Check in · I'm here</button><p class="hint" style="margin:-4px 0 0;text-align:center">Uses your location once to confirm you're at the spot. Earns points.</p>` : ''}
+      ${canCheck && arrived ? `<div class="here-box"><b>✓ You're checked in</b>${sharingHere ? 'The group can see you on the map until the event ends.' : 'Want the group to spot you? You can share your location until the event ends.'}</div>${sharingHere ? `<button class="btn secondary" data-act="stopShare">Stop sharing my location</button>` : `<button class="btn secondary" data-act="imHere">Show the group where I am</button>`}` : ''}
       <div class="btn-row">
         ${exactFor(e) ? `<a class="btn secondary" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${e.lat},${e.lng}">Directions</a>` : ''}
         ${joined ? `<button class="btn secondary" data-act="calendar">Add to calendar</button>` : ''}
@@ -1883,7 +1924,6 @@ function startSharing(id) {
     api.checkin(id, S.user.id, pos.coords.latitude, pos.coords.longitude).then(() => refreshCheckins(id)).catch(err => console.error(err));
   };
   S.sharing.watchId = navigator.geolocation.watchPosition(send, () => { toast('Allow location access to share where you are'); stopSharing(true); renderModal(true); }, { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 });
-  api.markArrived(id, S.user.id).then(loadAll).catch(err => console.error(err));
   toast(`The group can now see you at ${e ? e.place.split(',')[0] : 'the event'}`);
   renderModal(true);
 }
@@ -2411,25 +2451,30 @@ function syncForms() {
 const BADGES = [
   { id: 'first', e: '📍', label: 'First pin', sub: 'Join your first event', test: p => p.joined >= 1 },
   { id: 'host', e: '🌱', label: 'Host', sub: 'Start your own event', test: p => p.hosted >= 1 },
-  { id: 'here', e: '👋', label: 'Showed up', sub: "Tap I'm here at an event", test: p => p.arrived >= 1 },
+  { id: 'here', e: '👋', label: 'Showed up', sub: 'Check in at an event', test: p => p.arrived >= 1 },
   { id: 'explore', e: '🧭', label: 'Explorer', sub: 'Try 3 kinds of things', test: p => p.cats >= 3 },
   { id: 'friend', e: '🤝', label: 'Connector', sub: 'Make a friend', test: p => p.friends >= 1 },
   { id: 'guide', e: '⭐', label: 'Local guide', sub: 'Review a place', test: p => p.reviews >= 1 },
-  { id: 'legend', e: '🗺️', label: 'Local legend', sub: 'Add a place or price', test: p => p.places >= 1 },
+  { id: 'legend', e: '🗺️', label: 'Mapmaker', sub: 'Add a place or price', test: p => p.places >= 1 },
   { id: 'streak', e: '🔥', label: 'On a roll', sub: '3 weeks in a row', test: p => p.streak >= 3 },
   { id: 'allround', e: '🌈', label: 'All-rounder', sub: 'Try 5 kinds of things', test: p => p.cats >= 5 },
-  { id: 'regular', e: '💯', label: 'Regular', sub: 'Join 10 events', test: p => p.joined >= 10 }
+  { id: 'regular', e: '💯', label: 'Ten up', sub: 'Join 10 events', test: p => p.joined >= 10 },
+  // referral badges: count friends you invited who then turned up
+  { id: 'mate', group: 'ref', e: '🤜', label: 'Bring a mate', sub: '1 friend you invited attends a game', test: p => p.ref.friendsAttended >= 1 },
+  { id: 'crew', group: 'ref', e: '👥', label: 'Crew builder', sub: '3 friends you invited attend', test: p => p.ref.friendsAttended >= 3 },
+  { id: 'seed', group: 'ref', e: '🌳', label: 'Community seed', sub: '5 friends attend, across 2+ games', test: p => p.ref.friendsAttended >= 5 && p.ref.friendGames >= 2 },
+  { id: 'squad', group: 'ref', e: '🏟️', label: 'Squad', sub: 'Fill a game with 3+ players you invited', test: p => p.ref.squad }
 ];
 // weeks start on Monday; an event counts towards a week once it has started, or if it's this week
 function weekStart(ms) { const d = new Date(ms); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return +d; }
 function weekBefore(ms) { const d = new Date(ms); d.setDate(d.getDate() - 7); return weekStart(+d); }
-function computeProgress(history, reviews, places = 0) {
+function computeProgress(history, reviews, places = 0, ref = {}) {
   const now = Date.now(), thisWeek = weekStart(now);
   const weeks = new Set(history.map(h => +new Date(h.starts_at)).filter(s => s <= now || weekStart(s) === thisWeek).map(weekStart));
   let w = weeks.has(thisWeek) ? thisWeek : weekBefore(thisWeek), streak = 0;
   while (weeks.has(w)) { streak++; w = weekBefore(w); }
   const p = {
-    history, reviews, places, streak, thisWeek: weeks.has(thisWeek),
+    history, reviews, places, streak, thisWeek: weeks.has(thisWeek), ref: { friendsAttended: 0, friendGames: 0, squad: false, ...ref },
     joined: history.filter(h => !h.hosted).length, hosted: history.filter(h => h.hosted).length,
     arrived: history.filter(h => h.arrived).length,
     cats: new Set(history.map(h => h.category || actOf(h.activity).cat)).size,
@@ -2438,10 +2483,27 @@ function computeProgress(history, reviews, places = 0) {
   p.got = BADGES.filter(b => b.test(p)).map(b => b.id);
   return p;
 }
+function rewardsHtml(r) {
+  const lv = levelOf(r.points), nx = nextLevel(r.points);
+  const pct = nx ? Math.round((r.points - lv.min) / (nx.min - lv.min) * 100) : 100;
+  const earn = [['📍', 'Attend a game', 'Check in when you get there', 10], ['🏟️', 'Host a game that fills', 'Every spot taken (4+ spots)', 20],
+    ['🤝', 'Play together', 'You and a new player you invited both turn up', 15], ['🗓️', 'Cancel 24+ hours ahead', 'So someone else can take your spot', 5],
+    ['💛', 'Complete a safety check', 'After a game you attended', 5]];
+  return `<div class="rw-card lvl-${lv.id}">
+      <div class="rw-top"><span class="rw-em">${lv.e}</span><div><small>Your level</small><b>${lv.label}</b></div><div class="rw-pts"><b>${r.points}</b><small>points</small></div></div>
+      <div class="rw-bar"><span style="width:${pct}%"></span></div>
+      <p>${nx ? `${nx.min - r.points} points to ${nx.e} ${nx.label}` : "You're at the top. Thanks for building the community"} · ${r.thisWeek}/${r.weekCap} this week</p>
+    </div>
+    <details class="rw-how"><summary>How to earn points</summary>
+      ${earn.map(([e, t, s, p]) => `<div class="rw-row"><i>${e}</i><div><b>${t}</b><span>${s}</span></div><em>+${p}</em></div>`).join('')}
+      <p class="hint">Points come from turning up, not tapping around: logins, opening the app, games that don't fill and ratings don't count. Up to ${r.weekCap} points a week.</p>
+    </details>
+    ${r.items && r.items.length ? `<details class="rw-how"><summary>Recent points</summary>${r.items.slice(0, 8).map(it => `<div class="rw-row"><i>${({ attend: '📍', host_fill: '🏟️', play_together: '🤝', cancel_early: '🗓️', safety: '💛' })[it.kind] || '⭐'}</i><div><b>${esc(it.label)}</b><span>${esc(dayLabel(+new Date(it.at)))}${it.capped ? ' · weekly cap reached' : ''}</span></div><em>+${it.points}</em></div>`).join('')}</details>` : ''}`;
+}
 function progressHtml(p) {
   return `<div class="streak"><span class="fl">${p.streak ? '🔥' : '🌱'}</span><div><b>${p.streak ? `${p.streak}-week streak` : 'Start a streak'}</b><span>${p.streak ? (p.thisWeek ? "You've got something on this week. Nice one." : 'Join something this week to keep it going.') : 'Do something with people each week to build a streak.'}</span></div></div>
-    <div class="sec-t">Badges · ${p.got.length} of ${BADGES.length}</div>
-    <div class="badge-grid">${BADGES.map(b => `<div class="bdg ${p.got.includes(b.id) ? 'got' : ''}"><div class="bi" aria-hidden="true">${b.e}</div><b>${b.label}</b><small>${p.got.includes(b.id) ? 'Unlocked' : b.sub}</small></div>`).join('')}</div>`;
+    ${[['Referral badges', BADGES.filter(b => b.group === 'ref')], ['Badges', BADGES.filter(b => !b.group)]].map(([t, list]) => `<div class="sec-t">${t} · ${list.filter(b => p.got.includes(b.id)).length} of ${list.length}</div>
+    <div class="badge-grid">${list.map(b => `<div class="bdg ${p.got.includes(b.id) ? 'got' : ''}"><div class="bi" aria-hidden="true">${b.e}</div><b>${b.label}</b><small>${p.got.includes(b.id) ? 'Unlocked' : b.sub}</small></div>`).join('')}</div>`).join('')}`;
 }
 let progressBusy = false;
 const safetyAsked = new Set();
@@ -2449,8 +2511,15 @@ async function refreshProgress() {
   if (!api || !api.history || !S.user || progressBusy) return;
   progressBusy = true;
   try {
-    const [history, reviews, seen, checks, places] = await Promise.all([api.history(), api.reviewCount(), api.seenBadges(), api.safetyChecks(), api.placesCount ? api.placesCount() : 0]);
-    const p = computeProgress(history, reviews, places);
+    const [history, reviews, seen, checks, places, rewards] = await Promise.all([api.history(), api.reviewCount(), api.seenBadges(), api.safetyChecks(), api.placesCount ? api.placesCount() : 0, api.rewards ? api.rewards().catch(() => null) : null]);
+    // points can arrive later (e.g. when someone else checks in), so celebrate any increase
+    if (rewards) {
+      const before = S.rewards && S.rewards.points;
+      if (before != null && rewards.points > before) setTimeout(() => toast(`+${rewards.points - before} points · ${levelOf(rewards.points).e} ${levelOf(rewards.points).label}`, true), 1800);
+      if (before != null && levelOf(rewards.points).id !== levelOf(before).id) setTimeout(() => toast(`${levelOf(rewards.points).e} Level up! You're now a ${levelOf(rewards.points).label}`, true), 4800);
+      S.rewards = rewards; if (S.me) S.me.points = rewards.points;
+    }
+    const p = computeProgress(history, reviews, places, rewards ? rewards.referral : {});
     S.progress = p;
     const fresh = p.got.filter(id => !seen.includes(id));
     if (fresh.length) {
@@ -2561,6 +2630,12 @@ async function run(fn, okMsg) {
   finally { $$('#modal .btn').forEach(b => { if (!b.matches('[disabled][data-keepdisabled]')) b.disabled = false; }); renderModal(true); }
 }
 // an .ics file opens straight in Apple Calendar, Google Calendar or Outlook
+// joining from a friend's shared link records who brought you (for the play-together bonus)
+async function joinWithInvite(id) {
+  const inv = store.get('pinnit_invite', null), ref = inv && (!inv.event || inv.event === id) ? inv.ref : null;
+  await api.join(id, ref);
+  if (ref) store.del('pinnit_invite');
+}
 function addToCalendar(id) {
   const e = S.events.find(x => x.id === id); if (!e) return;
   const stamp = ms => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
@@ -2578,9 +2653,23 @@ function addToCalendar(id) {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   toast('Added. You get a reminder an hour before');
 }
+// verified check-in: one location reading, checked on the server against the pin and the time
+function checkIn(id) {
+  if (!navigator.geolocation) return toast('Location is not available on this device');
+  toast('Finding you…');
+  navigator.geolocation.getCurrentPosition(async pos => {
+    try {
+      await api.markArrived(id, pos.coords.latitude, pos.coords.longitude);
+      await loadAll();
+      const e = S.events.find(x => x.id === id), n = e ? e.players.filter(p => p.arrived_at).length : 0;
+      toast(n >= 2 ? "✓ Checked in. +10 points" : "✓ Checked in. Your 10 points land when someone else checks in too", true);
+      renderModal(true);
+    } catch (err) { toast(friendlyError(err)); }
+  }, () => toast('Allow location access so we can check you in'), { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
+}
 async function shareEvent(id) {
   const e = S.events.find(x => x.id === id); if (!e) return;
-  const url = `${location.origin}${location.pathname}?event=${encodeURIComponent(e.id)}`;
+  const url = `${location.origin}${location.pathname}?event=${encodeURIComponent(e.id)}${S.me && S.me.referral_code ? '&ref=' + encodeURIComponent(S.me.referral_code) : ''}`;
   const text = `${iconOf(e)} ${labelOf(e)} at ${e.place.split(',')[0]}, ${whenLabel(e)}. Join me on Pinnit`;
   if (navigator.share) { try { await navigator.share({ title: 'Pinnit', text, url }); } catch {} return; }
   try { await navigator.clipboard.writeText(`${text} ${url}`); toast('Link copied'); } catch { prompt('Copy this link', url); }
@@ -2685,7 +2774,7 @@ $('#modal').addEventListener('click', async ev => {
       ob.deleting = true;
       stopSharing(true); closeAll(true); await api.signOut();
       Object.assign(ob, { step: 'welcome', age: '', name: '', gender: '', pledge: false, err: '' }); authState.photo = null; authState.photoUrl = '';
-      S.progress = null; S.blocked = null; S.recovery = null; safetyAsked.clear();
+      S.progress = null; S.blocked = null; S.recovery = null; S.rewards = null; safetyAsked.clear();
       return handleSession(null);
     case 'shareInvite': return shareInvite();
     case 'makeRecovery':
@@ -2713,8 +2802,8 @@ $('#modal').addEventListener('click', async ev => {
     case 'post': return postEvent();
     case 'join':
       if (api.deviceAccount && !store.get(FIRST_KEY, false) && S.progress && !S.progress.history.length) return push('firstTime', { id });
-      return run(() => api.join(id), "You're in. See you there");
-    case 'joinFirst': store.set(FIRST_KEY, true); back(); return run(() => api.join(id), "You're in. The meeting point is now showing");
+      return run(() => joinWithInvite(id), "You're in. See you there");
+    case 'joinFirst': store.set(FIRST_KEY, true); back(); return run(() => joinWithInvite(id), "You're in. The meeting point is now showing");
     case 'reportEvent': return push('report', { kind: 'event', id });
     case 'sendReport': {
       syncForms();
@@ -2732,7 +2821,7 @@ $('#modal').addEventListener('click', async ev => {
       const d = top.props.d, skip = a.dataset.act === 'skipSafe';
       await api.saveSafetyCheck({ event_id: top.props.ev.id, feel: skip ? null : d.feel, note: skip ? null : (d.note || '').trim() || null });
       closeAll(true);
-      if (!skip) toast(d.feel === 'yes' ? 'Glad it went well' : 'Thank you. Look after yourself');
+      if (!skip) toast((d.feel === 'yes' ? 'Glad it went well' : 'Thank you. Look after yourself') + (top.props.ev.arrived ? ' · +5 points' : ''), !!top.props.ev.arrived);
       return;
     }
     case 'writeReview': return push('reviewForm', { venueId: id });
@@ -2747,13 +2836,14 @@ $('#modal').addEventListener('click', async ev => {
       catch (e) { btn.disabled = false; btn.textContent = 'Post review'; err(friendlyError(e)); }
       return;
     }
-    case 'leave': if (!confirm('Leave this event?')) return; if (S.sharing && S.sharing.eventId === id) stopSharing(true); return run(() => api.leave(id, S.user.id), 'You left the event');
+    case 'leave': if (!confirm('Leave this event?')) return; if (S.sharing && S.sharing.eventId === id) stopSharing(true); return run(async () => { const r = await api.leave(id, S.user.id); if (r && r.credit) setTimeout(() => toast('+5 points for letting the group know early', true), 600); }, 'You left the event');
     case 'cancelEvent':
       if (!confirm('Cancel this event for everyone?')) return;
       if (S.sharing && S.sharing.eventId === id) stopSharing(true);
       try { await api.deleteEvent(id); toast('Event cancelled'); closeAll(true); await loadAll(); } catch (e) { toast(friendlyError(e)); }
       return;
     case 'imHere': return startSharing(id);
+    case 'checkIn': return checkIn(id);
     case 'stopShare': stopSharing(); return renderModal(true);
     case 'chat': return push('chat', { id });
     case 'share': return shareEvent(id);
@@ -2920,6 +3010,7 @@ window.addEventListener('resize', updateSheetHeight);
 (async function boot() {
   const params = new URLSearchParams(location.search);
   if (params.get('ref')) store.set('pinnit_ref', params.get('ref').toUpperCase().slice(0, 8));
+  if (params.get('ref')) store.set('pinnit_invite', { ref: params.get('ref').toUpperCase().slice(0, 8), event: params.get('event') || null });
   if (params.get('event')) store.set('pinnit_open_event', params.get('event'));
   if (params.get('place')) store.set('pinnit_open_place', params.get('place'));
   if (params.has('ref') || params.has('event') || params.has('place')) history.replaceState(null, '', location.pathname + location.hash);

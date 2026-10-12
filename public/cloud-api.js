@@ -77,9 +77,11 @@
     },
     async createEvent(row) { return req('POST', '/events', row); },
     async deleteEvent(id) { await req('DELETE', '/events/' + encodeURIComponent(id)); },
-    async join(id) { await req('POST', `/events/${encodeURIComponent(id)}/join`); },
-    async leave(id) { await req('DELETE', `/events/${encodeURIComponent(id)}/join`); },
-    async markArrived(id) { await req('POST', `/events/${encodeURIComponent(id)}/arrived`); },
+    async join(id, ref) { await req('POST', `/events/${encodeURIComponent(id)}/join`, ref ? { ref } : {}); },
+    async leave(id) { return req('DELETE', `/events/${encodeURIComponent(id)}/join`); },
+    // check-in needs the phone's position once: the server confirms you're at the spot
+    async markArrived(id, lat, lng) { return req('POST', `/events/${encodeURIComponent(id)}/arrived`, { lat, lng }); },
+    async rewards() { return req('GET', '/rewards'); },
     async messages(id) { return req('GET', `/events/${encodeURIComponent(id)}/messages`); },
     async sendMessage(id, body) {
       const m = await req('POST', `/events/${encodeURIComponent(id)}/messages`, { body });

@@ -31,13 +31,16 @@ CREATE TABLE IF NOT EXISTS safety (user_id TEXT NOT NULL, event_id TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS badges (user_id TEXT NOT NULL, badge_id TEXT NOT NULL, PRIMARY KEY (user_id, badge_id));
 CREATE TABLE IF NOT EXISTS spot_checks (key TEXT PRIMARY KEY, result TEXT NOT NULL, checked_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS restore_attempts (ip TEXT NOT NULL, at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS invites (invitee_id TEXT PRIMARY KEY, inviter_id TEXT NOT NULL, event_id TEXT, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS invites_inviter_idx ON invites(inviter_id);
+CREATE TABLE IF NOT EXISTS cancellations (user_id TEXT NOT NULL, event_id TEXT NOT NULL, hours_ahead REAL NOT NULL, at TEXT NOT NULL, PRIMARY KEY (user_id, event_id));
 CREATE TABLE IF NOT EXISTS moderation_log (id TEXT PRIMARY KEY, user_id TEXT, kind TEXT NOT NULL, reason TEXT NOT NULL, excerpt TEXT, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS restore_attempts_idx ON restore_attempts(ip, at);
 `;
 
 // Columns added after launch. CREATE TABLE IF NOT EXISTS won't add them to an existing table,
 // so add any that are missing (existing data is kept).
-const ADDED_COLUMNS = [['profiles', 'recovery_hash', 'TEXT']];
+const ADDED_COLUMNS = [['profiles', 'recovery_hash', 'TEXT'], ['profiles', 'points', 'INTEGER NOT NULL DEFAULT 0'], ['events', 'filled_at', 'TEXT']];
 async function migrate(db) {
   for (const [table, col, type] of ADDED_COLUMNS) {
     const { results } = await db.prepare(`PRAGMA table_info(${table})`).all();
