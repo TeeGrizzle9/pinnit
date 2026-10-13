@@ -56,8 +56,10 @@ async function migrate(db) {
     // people who keep their spot at every date of a series
     db.prepare('CREATE TABLE IF NOT EXISTS series_regulars (series_id TEXT NOT NULL, user_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (series_id, user_id))'),
     db.prepare('CREATE INDEX IF NOT EXISTS events_repeat_idx ON events(repeat, next_id)'),
-    // example events already come back every week
-    db.prepare("UPDATE events SET repeat = 'weekly' WHERE is_sample = 1 AND repeat IS NULL")
+    // example events all come back each week behind the scenes, but only the naturally regular ones
+    // (classes, clubs, run groups, about 40%) are shown as repeating; the rest read as one-offs
+    db.prepare(`UPDATE events SET repeat = CASE WHEN activity IN ('taichi', 'yoga', 'running', 'walktalk', 'bookclub', 'language', 'chess', 'knitting', 'touch')
+      OR (activity = 'swimming' AND CAST(substr(id, -1) AS INTEGER) % 2 = 0) THEN 'weekly' ELSE NULL END WHERE is_sample = 1`)
   ]);
 }
 

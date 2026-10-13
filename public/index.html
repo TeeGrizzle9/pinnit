@@ -488,6 +488,17 @@ textarea.field{height:92px;padding:12px 14px;resize:none;line-height:1.4}
 .feel button{border-radius:14px;background:var(--soft);padding:12px 4px;border:2px solid transparent;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:13px;font-weight:700}
 .feel button i{font-style:normal;font-size:26px;line-height:1.1}
 .feel button.on{border-color:var(--green);background:#fff}
+.install-bar{position:fixed;z-index:1250;left:12px;right:12px;top:calc(76px + var(--safe-t));max-width:460px;margin:0 auto;background:#fff;border-radius:18px;box-shadow:var(--shadow);padding:10px 10px 10px 12px;display:flex;align-items:center;gap:10px;animation:up .3s cubic-bezier(.2,.8,.2,1)}
+.install-bar img{border-radius:11px;flex:none}
+.install-bar>div{flex:1;min-width:0;line-height:1.25}
+.install-bar b{display:block;font-size:15px}
+.install-bar span{display:block;font-size:12.5px;color:var(--muted)}
+.install-bar .x{width:34px;height:34px;font-size:14px}
+.steps{list-style:none;padding:0;margin:14px 0 0;display:flex;flex-direction:column;gap:10px;counter-reset:s}
+.steps li{display:flex;gap:12px;align-items:center;background:var(--soft);border-radius:14px;padding:12px 14px;font-size:15px;line-height:1.35;counter-increment:s}
+.steps li::before{content:counter(s);width:28px;height:28px;border-radius:50%;background:var(--green);color:#fff;font-weight:800;display:grid;place-items:center;flex:none}
+.steps svg{vertical-align:-4px}
+@media (min-width:900px){.install-bar{left:436px;right:20px;top:86px;margin:0}}
 .cancel-ask{display:flex;flex-direction:column;gap:10px;background:#fff;border:1.5px solid var(--line);border-radius:16px;padding:14px}
 .cancel-ask b{font-size:15px}
 .help-box{background:var(--soft);border-radius:14px;padding:12px 14px;font-size:13px;line-height:1.5;margin-top:12px}
@@ -636,6 +647,12 @@ html.calm .pin.live::before{display:none}
 <div id="auth" class="auth hidden"><div class="auth-card" id="authCard"></div></div>
 <input type="file" id="fileIn" accept="image/*" class="hidden">
 <div id="toast" class="toast" role="status"></div>
+<div id="installBar" class="install-bar hidden" role="region" aria-label="Install Pinnit">
+  <img src="brand/android-chrome-192.png" alt="" width="44" height="44">
+  <div><b>Get the Pinnit app</b><span>Add it to your home screen. Free, no app store needed.</span></div>
+  <button class="btn primary sm" data-install>Install</button>
+  <button class="x" data-install-later aria-label="Not now">✕</button>
+</div>
 <!-- Shared backend: the Worker at /api (worker/index.js) with a Cloudflare D1 database.
      Everyone who opens Pinnit sees the same pins, chats, places and reviews. -->
 <script src="cloud-api.js"></script>
@@ -1637,6 +1654,7 @@ async function handleSession(session) {
   if (S.globalUnsub) S.globalUnsub();
   S.globalUnsub = api.subscribeGlobal(onGlobalChange);
   await loadAll();
+  offerInstallSoon();
   if (!S.me.age_bracket) push('editProfile', { locked: true, onboarding: true });
   else if (store.get('pinnit_pending_photo', false) && !S.me.avatar_url) { store.del('pinnit_pending_photo'); toast('Add your profile photo from your profile'); }
   const sharedPlace = store.get('pinnit_open_place', null);
@@ -1731,6 +1749,8 @@ VIEWS.profile = () => {
       return `<div class="prow"><button class="pmain" data-person="${esc(p.id)}">${avatar(p)}<div class="pi"><strong>${esc(p.display_name)}</strong><span>${esc(p.last_event)} · ${esc(dayLabel(+new Date(p.last_played)))}</span></div></button><div class="acts">${act}</div></div>`;
     }).join('') : '<p class="muted-s">People from events you finish will show up here.</p>'}
 
+    ${canInstall() ? `<button class="toggle" data-act="install" style="margin-top:22px"><div><strong>📲 Install Pinnit</strong><span>Add it to your home screen, like an app. Free.</span></div><span aria-hidden="true">›</span></button>` : ''}
+
     <div class="sec-t">Display and comfort</div>
     ${COMFORT.map(c => `<button class="toggle ${comfortOn(c.id) ? 'on' : ''}" data-comfort="${c.id}" aria-pressed="${comfortOn(c.id)}"><div><strong>${c.label}</strong><span>${c.sub}</span></div><i class="switch"></i></button>`).join('')}
 
@@ -1741,6 +1761,65 @@ VIEWS.profile = () => {
     <div class="d-actions" style="margin-top:22px"><button class="btn danger" data-act="signOut">Delete my Pinnit</button></div>
     <p class="fine" style="text-align:center">Removes your profile, events, chats, reviews and badges from Pinnit for good. Your account lives on this phone, so clearing the browser's data also signs you out.</p>`;
 };
+/* =====================================================================
+   INSTALL: Pinnit on the home screen, like an app (free, no app store)
+   ===================================================================== */
+const INSTALL = { evt: null };
+const UA = navigator.userAgent;
+const IS_IOS = /iPhone|iPad|iPod/.test(UA) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const IS_ANDROID = /Android/i.test(UA);
+const IN_APP_BROWSER = /FBAN|FBAV|Instagram|Line\/|Snapchat|TikTok|LinkedInApp/i.test(UA);
+const isInstalled = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const canInstall = () => !isInstalled() && (!!INSTALL.evt || IS_IOS || IS_ANDROID);
+// Chrome and Edge offer their own install prompt; keep it for when the person taps Install
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); INSTALL.evt = e; });
+window.addEventListener('appinstalled', () => { INSTALL.evt = null; $('#installBar').classList.add('hidden'); toast('Pinnit is on your home screen', true); });
+const INSTALL_SNOOZE = 14 * 864e5;
+// a gentle banner once someone has had a look around, not the moment they arrive
+function offerInstallSoon() {
+  if (store.get('pinnit_install_later', 0) > Date.now()) return;
+  const tryShow = n => {
+    if (!canInstall() || !S.user) return;
+    if (S.stack.length || S.placing) return n < 12 && setTimeout(() => tryShow(n + 1), 15000);
+    $('#installBar').classList.remove('hidden');
+  };
+  setTimeout(() => tryShow(0), 25000);
+}
+$('#installBar').addEventListener('click', e => {
+  if (e.target.closest('[data-install-later]')) { store.set('pinnit_install_later', Date.now() + INSTALL_SNOOZE); $('#installBar').classList.add('hidden'); }
+  else if (e.target.closest('[data-install]')) { $('#installBar').classList.add('hidden'); startInstall(); }
+});
+async function startInstall() {
+  if (INSTALL.evt && !IS_IOS) {
+    const ev = INSTALL.evt; INSTALL.evt = null;
+    ev.prompt();
+    const choice = await ev.userChoice.catch(() => ({}));
+    if (choice.outcome !== 'accepted') store.set('pinnit_install_later', Date.now() + INSTALL_SNOOZE);
+    return;
+  }
+  push('install', {});
+}
+const SHARE_IC = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#276EF1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Share"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>';
+VIEWS.install = () => {
+  const r = S.recovery || {};
+  let steps;
+  if (IN_APP_BROWSER) steps = [`Tap <b>⋯</b> or the menu in this app and choose <b>Open in ${IS_IOS ? 'Safari' : 'browser'}</b>`, 'Then open your profile and tap <b>Install Pinnit</b> again'];
+  else if (IS_IOS) steps = [`Tap the Share button ${SHARE_IC} ${/CriOS|FxiOS|EdgiOS/.test(UA) ? 'in the address bar' : 'at the bottom of Safari'}`, 'Scroll down and tap <b>Add to Home Screen</b>', 'Tap <b>Add</b>. Pinnit appears with your other apps'];
+  else if (IS_ANDROID) steps = ['Tap the menu <b>⋮</b> at the top right of your browser', 'Tap <b>Install app</b> or <b>Add to Home screen</b>', 'Tap <b>Install</b>. Pinnit appears with your other apps'];
+  else steps = ['On your phone, scan the Pinnit QR code or go to <b>pinnit.pages.dev</b>', 'Open your profile there and tap <b>Install Pinnit</b>'];
+  return `${head('Install Pinnit')}
+    <p class="muted-s" style="margin-top:8px">From your home screen Pinnit works like an app: its own icon, full screen, no browser bars. It's free, with nothing to download from an app store.</p>
+    <ol class="steps">${steps.map(s => `<li><span>${s}</span></li>`).join('')}</ol>
+    ${IS_IOS && !IN_APP_BROWSER ? `<div class="save-acc"><b>🔑 Bring your account with you</b>
+      <p>On iPhone, the home-screen app can start signed out. Get a recovery code first, then in the app tap <b>Restore your account</b> and enter it.</p>
+      ${r.code ? `<div class="code-show">${esc(r.code)}</div><div class="btn-row"><button class="btn secondary" data-act="copyRecovery">Copy code</button></div>`
+        : `<button class="btn primary sm" data-act="makeRecovery">${r.saved ? 'Make a new code' : 'Get my recovery code'}</button>${r.saved ? '<p class="hint">You already have a code. If you kept it, you can use that one.</p>' : ''}`}
+    </div>` : ''}`;
+};
+AFTER.install = (props, soft) => {
+  if (!soft && api.recoveryStatus && !(S.recovery && S.recovery.code)) api.recoveryStatus().then(saved => { S.recovery = { ...(S.recovery || {}), saved }; const t = S.stack[S.stack.length - 1]; if (t && t.kind === 'install') renderModal(true); }).catch(() => {});
+};
+
 // "Save my account": a recovery code to move the account to another phone or get it back
 function recoveryCard() {
   const r = S.recovery || {};
@@ -2907,6 +2986,7 @@ $('#modal').addEventListener('click', async ev => {
       return;
     }
     case 'cancelKeep': S.cancelAsk = null; return renderModal(true);
+    case 'install': return startInstall();
     case 'stopRepeat':
       if (!confirm("Stop repeating? This date still goes ahead, but no new dates will be added.")) return;
       return run(() => api.stopRepeat(id), 'This is now the last date');
