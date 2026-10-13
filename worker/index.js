@@ -342,7 +342,7 @@ route('POST', '/api/events', async ctx => {
   const spot = await placeOrFail(db, lat, lng, 'event');
   let venue_id = body.venue_id ? String(body.venue_id) : (spot.venue_id || null);
   if (venue_id && !await db.prepare('SELECT 1 FROM venues WHERE id = ?').bind(venue_id).first()) venue_id = null;
-  const repeat = body.repeat ? oneOf(body.repeat, Object.keys(REPEATS), 'how often it repeats') : null;
+  const repeat = body.repeat ? oneOf(body.repeat, Object.keys(REPEATS), 'repeat option') : null;
   const times = repeat ? Math.round(num(body.repeat_times, 2, 12, 'number of times')) : null;
   const id = uuid(), t = now();
   await write(db, [
