@@ -63,6 +63,50 @@ async function setup(db) {
   await migrate(db);
   const seeded = await db.prepare("SELECT value FROM meta WHERE key = 'seeded'").first();
   if (!seeded) await seed(db);
+  const greater = await db.prepare("SELECT value FROM meta WHERE key = 'seeded_greater'").first();
+  if (!greater) await seedGreaterSydney(db);
+}
+
+// Example events beyond the city (added 2026-10). Every spot was checked against the same
+// public-space rules as a real pin. Runs once on an existing database; ids are fixed, so it's safe.
+async function seedGreaterSydney(db) {
+  const NOW = Date.now(), H = 3600e3, D = 864e5;
+  const iso = ms => new Date(ms).toISOString();
+  const at = h => { const d = new Date(NOW + h * H); d.setUTCMinutes(Math.round(d.getUTCMinutes() / 15) * 15, 0, 0); return iso(+d); };
+  const S = [];
+  const add = (sql, ...args) => S.push(db.prepare(sql).bind(...args));
+  [['p8', 'Aarav', '25-35', 'man', 'Liverpool local. Dance, cricket and good chai.'],
+   ['p9', 'Nina', '35-45', 'woman', 'Runs along the Nepean most evenings.'],
+   ['p10', 'Kai', '18-25', 'non_binary', 'Beach person. Touch footy and ocean pools.'],
+   ['p11', 'Grace', '55-65', 'woman', 'Retired art teacher. Sketchbook always in my bag.']]
+    .forEach(([id, name, age, gender, bio]) => add('INSERT OR IGNORE INTO profiles (id, display_name, age_bracket, gender, bio, is_sample, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)', id, name, age, gender, bio, iso(NOW - 45 * D)));
+  [['v8', 'Hornsby Aquatic and Leisure Centre', 'pool', -33.70147, 151.096087, 'Hornsby', ['wheelchair', 'step_free', 'toilet', 'transport'], 'Indoor and outdoor pools near Hornsby station. (Example details, check with the centre.)', 'p2', null],
+   ['v9', 'Cronulla Rock Pools', 'pool', -34.053753, 151.155626, 'Cronulla', ['toilet', 'transport'], 'Ocean rock pools at the end of Cronulla Beach. Free to use.', 'p10', 0],
+   ['v10', 'Parramatta Park', 'park', -33.808196, 150.999125, 'Parramatta', ['wheelchair', 'step_free', 'toilet', 'shade', 'transport'], 'Big heritage park by the river. Free to use.', 'p3', 0]]
+    .forEach(([id, name, kind, lat, lng, address, access, desc, by, free]) => {
+      add('INSERT OR IGNORE INTO venues (id, name, kind, lat, lng, address, description, website, access, created_by, manager_id, manager_verified, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, 0, ?)', id, name, kind, lat, lng, address, desc, JSON.stringify(access), by, iso(NOW - 20 * D));
+      if (free === 0) add('INSERT OR IGNORE INTO venue_prices (id, venue_id, label, price, unit, note, created_by, updated_by, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)', 'pr-' + id, id, 'Entry', 'entry', 'Free to use', by, by, iso(NOW - 5 * D));
+    });
+  const events = [
+    ['p3', 'walktalk', 'wellbeing', 'Walk and talk around Parramatta Park', 20, 60, 15, -33.808196, 150.999125, 'Parramatta Park, Parramatta', 'quiet', ['wheelchair', 'step_free', 'shade', 'transport', 'newcomers'], 'A gentle loop, about 45 minutes. Come as you are.', 'v10', ['p7']],
+    ['p9', 'running', 'move', 'Nepean riverside social run, all paces', 36, 60, 20, -33.748171, 150.676664, 'Regatta Park, Penrith', 'moderate', ['step_free', 'transport', 'newcomers', 'dogs'], 'Out and back along the river. Nobody gets left behind.', null, ['p2', 'p5']],
+    ['p8', 'dance', 'move', 'Bollywood dance in Bigge Park', 54, 60, 25, -33.921791, 150.928105, 'Bigge Park, Liverpool', 'loud', ['step_free', 'transport', 'newcomers', 'kids'], 'Easy follow-along routines. No experience needed.', null, ['p1', 'p4']],
+    ['p6', 'language', 'social', 'Language swap and chai', 30, 90, 12, -33.915608, 151.034793, 'Paul Keating Park, Bankstown', 'moderate', ['wheelchair', 'seating', 'transport', 'newcomers', 'alcohol_free'], 'Practise a language you are learning, help someone with yours.', null, ['p8']],
+    ['p11', 'sketching', 'arts', 'Sketching in the Japanese garden', 75, 120, 10, -34.070267, 150.808264, 'Koshigaya Park, Campbelltown', 'quiet', ['seating', 'shade', 'newcomers', 'gear'], 'Spare pencils and paper to share. All skill levels.', null, ['p3']],
+    ['p2', 'swimming', 'move', 'Early lap swim, all speeds', 44, 60, 8, -33.70147, 151.096087, 'Hornsby Aquatic and Leisure Centre, Hornsby', 'moderate', ['wheelchair', 'toilet', 'newcomers'], 'Pay your own entry at the desk.', 'v8', []],
+    ['p10', 'touch', 'sport', 'Twilight touch footy at Manly Oval', 60, 90, 14, -33.796031, 151.284018, 'Manly Oval, Manly', 'moderate', ['toilet', 'transport', 'newcomers'], 'Mixed teams, friendly pace.', null, ['p2', 'p5', 'p6']],
+    ['p10', 'colddip', 'wellbeing', 'Ocean pool dip and coffee', 90, 60, 12, -34.053753, 151.155626, 'Cronulla Rock Pools, Cronulla', 'moderate', ['toilet', 'transport', 'newcomers'], 'A quick dip, then coffee together.', 'v9', ['p9']]
+  ];
+  events.forEach(([host, act, cat, title, hours, dur, max, lat, lng, place, noise, access, notes, venue, people], i) => {
+    const id = 'gs' + i;
+    add(`INSERT OR IGNORE INTO events (id, host_id, activity, category, title, notes, meeting_point, skill, cost, max_people, starts_at, duration_mins, gender_rule, age_brackets, noise_level, access, venue_id, lat, lng, place, is_sample, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, 'All levels', NULL, ?, ?, ?, 'everyone', NULL, ?, ?, ?, ?, ?, ?, 1, ?)`,
+      id, host, act, cat, title, notes, max, at(hours), dur, noise, JSON.stringify(access), venue, lat, lng, place, iso(NOW));
+    [host, ...people].forEach(u => add('INSERT OR IGNORE INTO participants (event_id, user_id, joined_at) VALUES (?, ?, ?)', id, u, iso(NOW - H)));
+  });
+  add("INSERT OR REPLACE INTO meta (key, value) VALUES ('seeded_greater', ?)", iso(NOW));
+  add("UPDATE meta SET value = CAST(value AS INTEGER) + 1 WHERE key = 'version'");
+  await db.batch(S);
 }
 
 async function seed(db) {
