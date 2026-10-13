@@ -488,6 +488,8 @@ textarea.field{height:92px;padding:12px 14px;resize:none;line-height:1.4}
 .feel button{border-radius:14px;background:var(--soft);padding:12px 4px;border:2px solid transparent;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:13px;font-weight:700}
 .feel button i{font-style:normal;font-size:26px;line-height:1.1}
 .feel button.on{border-color:var(--green);background:#fff}
+.cancel-ask{display:flex;flex-direction:column;gap:10px;background:var(--soft);border-radius:16px;padding:14px}
+.cancel-ask b{font-size:15px}
 .help-box{background:var(--soft);border-radius:14px;padding:12px 14px;font-size:13px;line-height:1.5;margin-top:12px}
 .help-box b{display:block;font-size:14px}
 .help-box a{font-weight:800;color:var(--green-d)}
@@ -822,6 +824,13 @@ function statusOf(e, now = Date.now()) {
   if (now >= startMs(e)) return 'live';
   return 'upcoming';
 }
+// recurring events: each date is its own event; the next one appears when this one finishes
+const REPEAT_OPTS = [['', "Doesn't repeat"], ['weekly', 'Every week'], ['fortnightly', 'Every fortnight']];
+const REPEAT_TIMES = [4, 8, 12];
+const repeatWord = e => e.repeat === 'fortnightly' ? 'fortnight' : 'week';
+const isSeries = e => !!e.repeat && !e.is_sample;
+const seriesGoesOn = e => isSeries(e) && e.repeat_left > 0;
+function nextDateMs(e) { const d = new Date(startMs(e)); d.setDate(d.getDate() + (e.repeat === 'fortnightly' ? 14 : 7)); return +d; }
 function durLabel(m) { return m % 60 ? `${Math.floor(m / 60) ? Math.floor(m / 60) + ' hr ' : ''}${m % 60} min` : `${m / 60} hr`; }
 function whenLabel(e, now = Date.now()) {
   const st = statusOf(e, now);
@@ -1126,6 +1135,7 @@ function eventCard(e, now) {
   const tags = [];
   if (e.is_sample) tags.push('<span class="tag example">Example</span>');
   if (isHost(e)) tags.push('<span class="tag dark">Hosting</span>'); else if (isIn(e)) tags.push('<span class="tag green">Going</span>');
+  if (e.repeat) tags.push(`<span class="tag" title="Repeats every ${repeatWord(e)}">🔁 ${e.repeat === 'fortnightly' ? 'Fortnightly' : 'Weekly'}</span>`);
   tags.push(...accessTags(e));
   if (e.gender_rule !== 'everyone') tags.push(`<span class="tag">${esc(ruleLabel(e.gender_rule))}</span>`);
   if (e.age_brackets.length) tags.push(`<span class="tag">${esc(agesLabel(e.age_brackets))}</span>`);
@@ -1850,7 +1860,11 @@ VIEWS.event = props => {
   const sharingHere = S.sharing && S.sharing.eventId === e.id;
   const nearStart = startMs(e) - now < 60 * 60000;
   let primary;
-  if (host) primary = `<button class="btn danger" data-act="cancelEvent">Cancel event</button>`;
+  if (host && S.cancelAsk === e.id) primary = `<div class="cancel-ask"><b>Cancel which dates?</b>
+      <button class="btn danger" data-act="cancelOne">Just this date · ${esc(dayLabel(startMs(e)))}</button>
+      <button class="btn secondary" data-act="cancelAll">This and every future date</button>
+      <button class="text-link" data-act="cancelKeep">Keep it</button></div>`;
+  else if (host) primary = `<button class="btn danger" data-act="cancelEvent">Cancel ${seriesGoesOn(e) ? 'a date' : 'event'}</button>`;
   else if (joined) primary = `<button class="btn secondary" data-act="leave">You're going · Leave</button>`;
   else if (!elig.ok) primary = `<button class="btn primary" disabled>${esc(elig.text)}</button>`;
   else primary = `<button class="btn primary" data-act="join">Join · ${e.max_people - count} spot${e.max_people - count === 1 ? '' : 's'} left</button>`;
@@ -1872,6 +1886,9 @@ VIEWS.event = props => {
     ${fr.length ? `<div class="friends-going"><span class="stack">${fr.slice(0, 3).map(p => avatar(p.profile)).join('')}</span>${esc(first(fr[0].profile.display_name))}${fr.length > 1 ? ` and ${fr.length - 1} other friend${fr.length > 2 ? 's' : ''} are` : ' is'} going</div>` : ''}
     <div class="rows">
       <div class="row"><div class="ri">${I.clock}</div><div><strong>${whenLabel(e, now)}</strong><span>${fmtTime(startMs(e))} to ${fmtTime(endMs(e))} · ${durLabel(e.duration_mins)}</span></div></div>
+      ${e.repeat ? `<div class="row"><div class="ri" style="font-size:17px">🔁</div><div><strong>Repeats every ${repeatWord(e)}</strong><span>${e.is_sample ? 'Same time each week'
+        : seriesGoesOn(e) ? `Next: ${esc(dayLabel(nextDateMs(e)))} ${fmtTime(nextDateMs(e))}${e.repeat_left > 1 ? ` · ${e.repeat_left} more dates to come` : ' · the last date'}`
+        : 'This is the last date'}</span></div></div>` : ''}
       <div class="row"><div class="ri">${I.shield}</div><div><strong>${esc(ruleLabel(e.gender_rule))} · ${esc(agesLabel(e.age_brackets))}</strong><span class="${elig.ok ? 'good' : 'bad'}">${esc(host ? 'Who can join' : joined ? "You're in" : elig.text)}</span></div></div>
       <div class="row"><div class="ri">${I.users}</div><div><strong>${count} of ${e.max_people} going</strong><span>${full ? 'Full' : `${e.max_people - count} spot${e.max_people - count === 1 ? '' : 's'} left`}${arrivedN ? ` · ${arrivedN} here now` : ''}</span></div></div>
       ${e.skill && e.skill !== 'All levels' ? `<div class="row"><div class="ri">${I.level}</div><div><strong>${esc(e.skill)}</strong><span>Level</span></div></div>` : ''}
@@ -1892,6 +1909,9 @@ VIEWS.event = props => {
     ${host && e.players.some(p => p.first_timer && p.user_id !== e.host_id) ? '<p class="hint" style="margin-top:4px">🌱 New means it\'s their first Pinnit event. A quick hello goes a long way.</p>' : ''}
     <div class="d-actions">
       ${joined ? primary : ''}
+      ${joined && !host && seriesGoesOn(e) ? `<button class="btn secondary" data-act="regular" aria-pressed="${!!e.regular}">${e.regular ? `✓ Spot kept every ${repeatWord(e)} · Stop` : `🔁 Keep my spot every ${repeatWord(e)}`}</button>
+        <p class="hint" style="margin:-4px 0 0;text-align:center">${e.regular ? "You'll be added to each new date. Leave any date you can't make." : "You'll be added to each new date automatically."}</p>` : ''}
+      ${host && seriesGoesOn(e) && S.cancelAsk !== e.id ? `<button class="text-link" data-act="stopRepeat">Stop repeating after this date</button>` : ''}
       ${canCheck && !arrived ? `<button class="btn green" data-act="checkIn">📍 Check in · I'm here</button><p class="hint" style="margin:-4px 0 0;text-align:center">Uses your location once to confirm you're at the spot. Earns points.</p>` : ''}
       ${canCheck && arrived ? `<div class="here-box"><b>✓ You're checked in</b>${sharingHere ? 'The group can see you on the map until the event ends.' : 'Want the group to spot you? You can share your location until the event ends.'}</div>${sharingHere ? `<button class="btn secondary" data-act="stopShare">Stop sharing my location</button>` : `<button class="btn secondary" data-act="imHere">Show the group where I am</button>`}` : ''}
       <div class="btn-row">
@@ -2181,7 +2201,7 @@ map.on('contextmenu', e => {
 });
 function openCreate(loc, venue) {
   const base = new Date(Date.now() + 30 * 60000); base.setMinutes(Math.ceil(base.getMinutes() / 15) * 15, 0, 0);
-  const d = S.draft || { cat: S.cats.size === 1 ? [...S.cats][0] : '', activity: '', title: '', date: dateVal(base), time: timeVal(base), duration: 60, max: 10, rule: 'everyone', ages: [], skill: 'All levels', cost: '', meeting: '', notes: '', noise: '', access: [], venue_id: null };
+  const d = S.draft || { cat: S.cats.size === 1 ? [...S.cats][0] : '', activity: '', title: '', date: dateVal(base), time: timeVal(base), duration: 60, max: 10, rule: 'everyone', ages: [], skill: 'All levels', cost: '', meeting: '', notes: '', noise: '', access: [], venue_id: null, repeat: '', times: 8 };
   if (loc) {
     d.loc = loc; d.venue_id = venue ? venue.id : null;
     if (venue) d.access = [...new Set([...d.access, ...venue.access])];
@@ -2208,6 +2228,11 @@ VIEWS.create = () => {
     <span class="lbl">How long</span>
     <div class="chips wrap">${DURATIONS.map(([m, l]) => `<button class="chip ${d.duration === m ? 'on' : ''}" data-ddur="${m}">${l}</button>`).join('')}</div>
     <p class="hint">The pin disappears from the map when the event ends.</p>
+    <span class="lbl">Repeats</span>
+    <div class="chips wrap">${REPEAT_OPTS.map(([v, l]) => `<button class="chip ${d.repeat === v ? 'on' : ''}" data-drep="${v}" aria-pressed="${d.repeat === v}">${v ? '🔁 ' : ''}${l}</button>`).join('')}</div>
+    ${d.repeat ? `<span class="lbl">How many dates in total</span>
+    <div class="chips wrap">${REPEAT_TIMES.map(n => `<button class="chip ${d.times === n ? 'on' : ''}" data-dtimes="${n}" aria-pressed="${d.times === n}">${n} times</button>`).join('')}</div>
+    <p class="hint">Same place and time${(() => { const s = new Date(`${d.date}T${d.time}`); return isNaN(s) ? '' : ', ' + s.toLocaleDateString('en-AU', { weekday: 'long' }) + 's'; })()}. Each date gets its own group chat, and the next one goes on the map when the last one ends. Regulars can keep their spot every time.</p>` : ''}
     <span class="lbl">Total people <em>(including you)</em></span>
     <div class="stepper"><button data-step="-1" aria-label="Fewer">−</button><output id="fMax">${d.max}</output><button data-step="1" aria-label="More">+</button></div>
     <span class="lbl">Who can join</span>
@@ -2259,7 +2284,8 @@ async function postEvent() {
     max_people: d.max, starts_at: new Date(Math.max(+start, Date.now())).toISOString(), duration_mins: d.duration,
     gender_rule: d.rule, age_brackets: d.ages.length ? AGES.filter(a => d.ages.includes(a)) : null,
     noise_level: d.noise || null, access: d.access.length ? d.access : null, venue_id: d.venue_id || null,
-    lat: d.loc.lat, lng: d.loc.lng, place: d.loc.place.slice(0, 160), host_id: S.user.id
+    lat: d.loc.lat, lng: d.loc.lng, place: d.loc.place.slice(0, 160), host_id: S.user.id,
+    repeat: d.repeat || null, repeat_times: d.repeat ? d.times : null
   };
   const btn = $('#postBtn'); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
   try {
@@ -2267,7 +2293,7 @@ async function postEvent() {
     S.draft = null;
     await loadAll();
     closeAll(true);
-    toast('Your event is live on the map');
+    toast(ev.repeat ? `Your event is live. It repeats every ${ev.repeat === 'weekly' ? 'week' : 'fortnight'}` : 'Your event is live on the map');
     openEvent(created.id);
   } catch (e) { console.error(e); btn.disabled = false; btn.textContent = 'Post event'; show(friendlyError(e)); }
 }
@@ -2765,6 +2791,8 @@ $('#modal').addEventListener('click', async ev => {
     if (q('[data-dacc]')) { syncDraft(); const a = q('[data-dacc]').dataset.dacc; d.access = d.access.includes(a) ? d.access.filter(x => x !== a) : [...d.access, a]; return renderModal(true); }
     if (q('[data-dact]')) { d.activity = q('[data-dact]').dataset.dact; $$('[data-dact]').forEach(b => b.classList.toggle('on', b === q('[data-dact]'))); return; }
     if (q('[data-ddur]')) { syncDraft(); d.duration = +q('[data-ddur]').dataset.ddur; return renderModal(true); }
+    if (q('[data-drep]')) { syncDraft(); d.repeat = q('[data-drep]').dataset.drep; return renderModal(true); }
+    if (q('[data-dtimes]')) { syncDraft(); d.times = +q('[data-dtimes]').dataset.dtimes; return renderModal(true); }
     if (q('[data-drule]')) { syncDraft(); d.rule = q('[data-drule]').dataset.drule; return renderModal(true); }
     if (q('[data-dage]')) { syncDraft(); const a = q('[data-dage]').dataset.dage; d.ages = d.ages.includes(a) ? d.ages.filter(x => x !== a) : [...d.ages, a]; return renderModal(true); }
     if (q('[data-dskill]')) { syncDraft(); d.skill = q('[data-dskill]').dataset.dskill; return renderModal(true); }
@@ -2864,11 +2892,28 @@ $('#modal').addEventListener('click', async ev => {
       return;
     }
     case 'leave': if (!confirm('Leave this event?')) return; if (S.sharing && S.sharing.eventId === id) stopSharing(true); return run(async () => { const r = await api.leave(id, S.user.id); if (r && r.credit) setTimeout(() => toast('+5 points for letting the group know early', true), 600); }, 'You left the event');
-    case 'cancelEvent':
+    case 'cancelEvent': {
+      const ev = S.events.find(x => x.id === id);
+      if (ev && seriesGoesOn(ev)) { S.cancelAsk = id; return renderModal(true); }
       if (!confirm('Cancel this event for everyone?')) return;
+    }
+    // falls through
+    case 'cancelOne': case 'cancelAll': {
+      const one = a.dataset.act === 'cancelOne';
+      if (a.dataset.act === 'cancelAll' && !confirm('Cancel this date and end the series for everyone?')) return;
+      S.cancelAsk = null;
       if (S.sharing && S.sharing.eventId === id) stopSharing(true);
-      try { await api.deleteEvent(id); toast('Event cancelled'); closeAll(true); await loadAll(); } catch (e) { toast(friendlyError(e)); }
+      try { const r = await api.deleteEvent(id, one); toast(one && r && r.next ? 'This date is cancelled. The next one is on the map' : 'Event cancelled'); closeAll(true); await loadAll(); } catch (e) { toast(friendlyError(e)); }
       return;
+    }
+    case 'cancelKeep': S.cancelAsk = null; return renderModal(true);
+    case 'stopRepeat':
+      if (!confirm("Stop repeating? This date still goes ahead, but no new dates will be added.")) return;
+      return run(() => api.stopRepeat(id), 'This is now the last date');
+    case 'regular': {
+      const ev = S.events.find(x => x.id === id), on = !(ev && ev.regular);
+      return run(() => api.setRegular(id, on), on ? `You'll be added to every ${repeatWord(ev)} from now on` : "You won't be added to future dates");
+    }
     case 'imHere': return startSharing(id);
     case 'checkIn': return checkIn(id);
     case 'stopShare': stopSharing(); return renderModal(true);

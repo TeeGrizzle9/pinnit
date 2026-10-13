@@ -201,6 +201,7 @@ route('DELETE', '/api/me', async ({ db, me }) => {
     db.prepare(`DELETE FROM participants WHERE user_id = ? OR event_id IN (${mine})`).bind(me, me),
     db.prepare(`DELETE FROM messages WHERE user_id = ? OR event_id IN (${mine})`).bind(me, me),
     db.prepare(`DELETE FROM checkins WHERE user_id = ? OR event_id IN (${mine})`).bind(me, me),
+    db.prepare('DELETE FROM series_regulars WHERE user_id = ? OR series_id IN (SELECT series_id FROM events WHERE host_id = ?)').bind(me, me),
     db.prepare('DELETE FROM events WHERE host_id = ?').bind(me),
     db.prepare('DELETE FROM friendships WHERE user_a = ? OR user_b = ?').bind(me, me),
     db.prepare('DELETE FROM reviews WHERE user_id = ?').bind(me),
@@ -246,16 +247,55 @@ async function rollSamples(db) {
   for (const e of results) {
     let s = Date.parse(e.starts_at);
     if (s + e.duration_mins * 60e3 > Date.now()) continue;
-    while (s + e.duration_mins * 60e3 <= Date.now()) s += 7 * D;
+    while (s + e.duration_mins * 60e3 <= Date.now()) s = addSydneyDays(s, 7);
     stmts.push(db.prepare('UPDATE events SET starts_at = ? WHERE id = ?').bind(new Date(s).toISOString(), e.id),
       db.prepare('DELETE FROM participants WHERE event_id = ? AND user_id NOT IN (SELECT id FROM profiles WHERE is_sample = 1)').bind(e.id),
       db.prepare('DELETE FROM messages WHERE event_id = ?').bind(e.id),
       db.prepare('DELETE FROM checkins WHERE event_id = ?').bind(e.id));
   }
   if (stmts.length) await write(db, stmts);
+  await rollSeries(db);
 }
-const eventOut = (e, people, parts) => ({
+
+// Recurring events: once a date finishes, put the next one on the map. Each date is its own event
+// (own chat, check-ins and rewards). Ids are fixed per date, so two requests doing this at once is fine.
+const REPEATS = { weekly: 7, fortnightly: 14 };
+// add whole days in Sydney time, so a 6pm event stays at 6pm when daylight saving starts or ends
+const sydParts = new Intl.DateTimeFormat('en-US', { timeZone: 'Australia/Sydney', hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' });
+const sydOffset = ms => { const p = Object.fromEntries(sydParts.formatToParts(new Date(ms)).map(x => [x.type, x.value])); return Date.UTC(+p.year, p.month - 1, +p.day, +p.hour, +p.minute) - Math.floor(ms / 60e3) * 60e3; };
+function addSydneyDays(ms, days) {
+  const wall = ms + sydOffset(ms) + days * D;
+  return wall - sydOffset(wall - sydOffset(ms));
+}
+async function rollSeries(db) {
+  const { results } = await db.prepare(`SELECT * FROM events WHERE is_sample = 0 AND repeat IS NOT NULL AND repeat_left > 0 AND next_id IS NULL
+    AND julianday(starts_at) + duration_mins / 1440.0 <= julianday('now') LIMIT 50`).all();
+  const stmts = results.flatMap(e => nextDate(db, e, Date.now()));
+  if (stmts.length) await write(db, stmts);
+}
+// statements that create the date after `e`, skipping any that would already be over by `after`
+function nextDate(db, e, after) {
+  const step = REPEATS[e.repeat] || 7, series = e.series_id || e.id;
+  let s = addSydneyDays(Date.parse(e.starts_at), step), n = (e.series_n || 1) + 1, left = e.repeat_left - 1;
+  while (s + e.duration_mins * 60e3 <= after && left > 0) { s = addSydneyDays(s, step); n++; left--; }
+  if (s + e.duration_mins * 60e3 <= after) return [db.prepare('UPDATE events SET repeat_left = 0 WHERE id = ?').bind(e.id)];
+  const id = `${series}-${n}`, t = now();
+  return [
+    db.prepare(`INSERT OR IGNORE INTO events (id, host_id, activity, category, title, notes, meeting_point, skill, cost, max_people, starts_at, duration_mins, gender_rule, age_brackets, noise_level, access, venue_id, lat, lng, place, is_sample, created_at, repeat, repeat_left, series_id, series_n)
+      SELECT ?, host_id, activity, category, title, notes, meeting_point, skill, cost, max_people, ?, duration_mins, gender_rule, age_brackets, noise_level, access, venue_id, lat, lng, place, 0, created_at, repeat, ?, ?, ? FROM events WHERE id = ?`)
+      .bind(id, new Date(s).toISOString(), left, series, n, e.id),
+    db.prepare('INSERT OR IGNORE INTO participants (event_id, user_id, joined_at) VALUES (?, ?, ?)').bind(id, e.host_id, t),
+    // regulars keep their spot, up to the size limit, unless the host has since blocked them
+    db.prepare(`INSERT OR IGNORE INTO participants (event_id, user_id, joined_at)
+      SELECT ?, r.user_id, ? FROM series_regulars r JOIN profiles p ON p.id = r.user_id
+      WHERE r.series_id = ? AND r.user_id != ? AND r.user_id NOT IN (SELECT blocked_id FROM blocks WHERE user_id = ?) ORDER BY r.created_at LIMIT ?`)
+      .bind(id, t, series, e.host_id, e.host_id, Math.max(0, e.max_people - 1)),
+    db.prepare('UPDATE events SET next_id = ? WHERE id = ?').bind(id, e.id)
+  ];
+}
+const eventOut = (e, people, parts, regular) => ({
   ...e, is_sample: !!e.is_sample, age_brackets: parseJ(e.age_brackets), access: parseJ(e.access) || [],
+  regular: !!(regular && regular.has(e.series_id || e.id)),
   host: people.get(e.host_id) || null,
   participants: parts.filter(p => p.event_id === e.id).map(p => ({ user_id: p.user_id, joined_at: p.joined_at, arrived_at: p.arrived_at, first_timer: !!p.first_timer, profile: people.get(p.user_id) || null }))
 });
@@ -264,13 +304,14 @@ route('GET', '/api/events', async ({ db, me }) => {
   // events disappear the moment they finish
   const live = "julianday(e.starts_at) + e.duration_mins / 1440.0 > julianday('now')";
   const blocked = 'SELECT blocked_id FROM blocks WHERE user_id = ?';
-  const [ev, parts, people] = await db.batch([
+  const [ev, parts, people, regs] = await db.batch([
     db.prepare(`SELECT e.* FROM events e WHERE ${live} AND e.host_id NOT IN (${blocked}) ORDER BY e.starts_at LIMIT 500`).bind(me),
     db.prepare(`SELECT pa.*, NOT EXISTS (SELECT 1 FROM participants x WHERE x.user_id = pa.user_id AND x.joined_at < pa.joined_at) AS first_timer FROM participants pa JOIN events e ON e.id = pa.event_id WHERE ${live}`),
-    db.prepare(`SELECT ${PUBLIC} FROM profiles WHERE id IN (SELECT pa.user_id FROM participants pa JOIN events e ON e.id = pa.event_id WHERE ${live})`)
+    db.prepare(`SELECT ${PUBLIC} FROM profiles WHERE id IN (SELECT pa.user_id FROM participants pa JOIN events e ON e.id = pa.event_id WHERE ${live})`),
+    db.prepare('SELECT series_id FROM series_regulars WHERE user_id = ?').bind(me)
   ]);
-  const map = new Map(people.results.map(p => [p.id, profileOut(p)]));
-  return ev.results.map(e => eventOut(e, map, parts.results));
+  const map = new Map(people.results.map(p => [p.id, profileOut(p)])), regular = new Set(regs.results.map(r => r.series_id));
+  return ev.results.map(e => eventOut(e, map, parts.results, regular));
 });
 route('POST', '/api/check-spot', async ({ db, body }) => {
   try { return await verifySpot(db, Number(body.lat), Number(body.lng), body.type || 'event'); }
@@ -301,26 +342,52 @@ route('POST', '/api/events', async ctx => {
   const spot = await placeOrFail(db, lat, lng, 'event');
   let venue_id = body.venue_id ? String(body.venue_id) : (spot.venue_id || null);
   if (venue_id && !await db.prepare('SELECT 1 FROM venues WHERE id = ?').bind(venue_id).first()) venue_id = null;
+  const repeat = body.repeat ? oneOf(body.repeat, Object.keys(REPEATS), 'how often it repeats') : null;
+  const times = repeat ? Math.round(num(body.repeat_times, 2, 12, 'number of times')) : null;
   const id = uuid(), t = now();
   await write(db, [
-    db.prepare(`INSERT INTO events (id, host_id, activity, category, title, notes, meeting_point, skill, cost, max_people, starts_at, duration_mins, gender_rule, age_brackets, noise_level, access, venue_id, lat, lng, place, is_sample, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`).bind(
+    db.prepare(`INSERT INTO events (id, host_id, activity, category, title, notes, meeting_point, skill, cost, max_people, starts_at, duration_mins, gender_rule, age_brackets, noise_level, access, venue_id, lat, lng, place, is_sample, created_at, repeat, repeat_left, series_id, series_n)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`).bind(
       id, me, activity, category, title, str(body.notes, 500, { name: 'note' }), str(body.meeting_point, 160, { name: 'meeting point' }),
       body.skill == null ? null : oneOf(body.skill, SKILLS, 'level'), body.cost == null || body.cost === '' ? null : num(body.cost, 0, 1000, 'cost'),
       Math.round(num(body.max_people, 2, 100, 'number of people')), new Date(Math.max(start, Date.now())).toISOString(),
       Math.round(num(body.duration_mins, 15, 720, 'length')), oneOf(body.gender_rule, RULES, 'who can join', 'everyone'),
       ages.length ? JSON.stringify(ages) : null, body.noise_level ? oneOf(body.noise_level, NOISE, 'noise level') : null,
-      access.length ? JSON.stringify(access) : null, venue_id, lat, lng, str(body.place, 160, { required: true, name: 'place' }), t),
+      access.length ? JSON.stringify(access) : null, venue_id, lat, lng, str(body.place, 160, { required: true, name: 'place' }), t,
+      repeat, repeat ? times - 1 : null, repeat ? id : null, repeat ? 1 : null),
     db.prepare('INSERT INTO participants (event_id, user_id, joined_at) VALUES (?, ?, ?)').bind(id, me, t)
   ]);
   return { id };
 });
 const getEvent = async (db, id) => (await db.prepare('SELECT * FROM events WHERE id = ?').bind(id).first()) || fail(404, 'That event has finished');
 const isParticipant = async (db, id, me) => !!await db.prepare('SELECT 1 FROM participants WHERE event_id = ? AND user_id = ?').bind(id, me).first();
-route('DELETE', '/api/events/:id', async ({ db, me, params }) => {
+// ?only=1 on a repeating event cancels just this date: the next one is put on the map straight away
+route('DELETE', '/api/events/:id', async ({ db, me, params, url }) => {
   const e = await getEvent(db, params.id);
   if (e.host_id !== me) fail(403, 'Only the host can cancel this event');
-  await write(db, ['participants', 'messages', 'checkins'].map(t => db.prepare(`DELETE FROM ${t} WHERE event_id = ?`).bind(e.id)).concat(db.prepare('DELETE FROM events WHERE id = ?').bind(e.id)));
+  const keepSeries = url.searchParams.get('only') === '1' && e.repeat && e.repeat_left > 0 && !e.next_id;
+  const next = keepSeries ? nextDate(db, e, Date.parse(e.starts_at) + e.duration_mins * 60e3).filter((s, i, all) => i < all.length - 1) : [];
+  if (!keepSeries && e.series_id) next.push(db.prepare('DELETE FROM series_regulars WHERE series_id = ?').bind(e.series_id));
+  await write(db, [...next, ...['participants', 'messages', 'checkins'].map(t => db.prepare(`DELETE FROM ${t} WHERE event_id = ?`).bind(e.id)), db.prepare('DELETE FROM events WHERE id = ?').bind(e.id)]);
+  return { ok: true, next: keepSeries };
+});
+// the host can stop a series repeating; this date still goes ahead
+route('POST', '/api/events/:id/stop-repeat', async ({ db, me, params }) => {
+  const e = await getEvent(db, params.id);
+  if (e.host_id !== me) fail(403, 'Only the host can change this event');
+  await write(db, [db.prepare('UPDATE events SET repeat = NULL, repeat_left = 0 WHERE id = ?').bind(e.id),
+    ...(e.series_id ? [db.prepare('DELETE FROM series_regulars WHERE series_id = ?').bind(e.series_id)] : [])]);
+  return { ok: true };
+});
+// "keep my spot every week": you're added to each new date of the series automatically
+route('POST', '/api/events/:id/regular', async ({ db, me, params, body }) => {
+  const e = await getEvent(db, params.id);
+  if (!e.repeat || e.is_sample || !(e.repeat_left > 0)) fail(400, "This event doesn't repeat");
+  const series = e.series_id || e.id;
+  if (body && body.on) {
+    if (!await isParticipant(db, e.id, me)) fail(403, 'Join this date first');
+    await write(db, [db.prepare('INSERT OR IGNORE INTO series_regulars (series_id, user_id, created_at) VALUES (?, ?, ?)').bind(series, me, now())]);
+  } else await write(db, [db.prepare('DELETE FROM series_regulars WHERE series_id = ? AND user_id = ?').bind(series, me)]);
   return { ok: true };
 });
 route('POST', '/api/events/:id/join', async ({ db, me, params, body }) => {

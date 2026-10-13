@@ -76,7 +76,9 @@
       catch { return null; }   // the app then asks OpenStreetMap itself
     },
     async createEvent(row) { return req('POST', '/events', row); },
-    async deleteEvent(id) { await req('DELETE', '/events/' + encodeURIComponent(id)); },
+    async deleteEvent(id, onlyThisDate) { return req('DELETE', '/events/' + encodeURIComponent(id) + (onlyThisDate ? '?only=1' : '')); },
+    async stopRepeat(id) { await req('POST', `/events/${encodeURIComponent(id)}/stop-repeat`, {}); },
+    async setRegular(id, on) { await req('POST', `/events/${encodeURIComponent(id)}/regular`, { on }); },
     async join(id, ref) { await req('POST', `/events/${encodeURIComponent(id)}/join`, ref ? { ref } : {}); },
     async leave(id) { return req('DELETE', `/events/${encodeURIComponent(id)}/join`); },
     // check-in needs the phone's position once: the server confirms you're at the spot

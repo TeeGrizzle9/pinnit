@@ -42,13 +42,23 @@ CREATE INDEX IF NOT EXISTS restore_attempts_idx ON restore_attempts(ip, at);
 
 // Columns added after launch. CREATE TABLE IF NOT EXISTS won't add them to an existing table,
 // so add any that are missing (existing data is kept).
-const ADDED_COLUMNS = [['profiles', 'recovery_hash', 'TEXT'], ['profiles', 'points', 'INTEGER NOT NULL DEFAULT 0'], ['events', 'filled_at', 'TEXT']];
+// Recurring events: `repeat` is 'weekly' or 'fortnightly', `repeat_left` is how many more dates follow
+// this one, and each date is its own row sharing a series_id (next_id links to the date after it).
+const ADDED_COLUMNS = [['profiles', 'recovery_hash', 'TEXT'], ['profiles', 'points', 'INTEGER NOT NULL DEFAULT 0'], ['events', 'filled_at', 'TEXT'],
+  ['events', 'repeat', 'TEXT'], ['events', 'repeat_left', 'INTEGER'], ['events', 'series_id', 'TEXT'], ['events', 'series_n', 'INTEGER'], ['events', 'next_id', 'TEXT']];
 async function migrate(db) {
   for (const [table, col, type] of ADDED_COLUMNS) {
     const { results } = await db.prepare(`PRAGMA table_info(${table})`).all();
     if (!results.some(c => c.name === col)) await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`).run();
   }
-  await db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS profiles_recovery_idx ON profiles(recovery_hash)').run();
+  await db.batch([
+    db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS profiles_recovery_idx ON profiles(recovery_hash)'),
+    // people who keep their spot at every date of a series
+    db.prepare('CREATE TABLE IF NOT EXISTS series_regulars (series_id TEXT NOT NULL, user_id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (series_id, user_id))'),
+    db.prepare('CREATE INDEX IF NOT EXISTS events_repeat_idx ON events(repeat, next_id)'),
+    // example events already come back every week
+    db.prepare("UPDATE events SET repeat = 'weekly' WHERE is_sample = 1 AND repeat IS NULL")
+  ]);
 }
 
 // Each request runs setup itself until one finishes. A Worker must never await a promise started by
