@@ -1,3 +1,5 @@
+import { REGION_PEOPLE, REGION_PLACES, REGION_EVENTS } from './seed-region.js';
+
 // Database tables, created on first use, plus a small set of example events so the map isn't
 // empty on day one. Example events and people are flagged is_sample and labelled in the app.
 
@@ -67,6 +69,88 @@ async function setup(db) {
   if (!greater) await seedGreaterSydney(db);
   const places = await db.prepare("SELECT value FROM meta WHERE key = 'seeded_places'").first();
   if (!places) await seedNotablePlaces(db);
+  const region = await db.prepare("SELECT value FROM meta WHERE key = 'seeded_region'").first();
+  if (!region) await seedRegion(db);
+}
+
+// Run statements in batches small enough for D1.
+async function batched(db, S) {
+  for (let i = 0; i < S.length; i += 40) await db.batch(S.slice(i, i + 40));
+}
+
+// Example times are set in Sydney local time on a given weekday, so a "dawn" walk really is at dawn.
+// The weekly roll-forward then moves them by whole weeks and they keep their hour.
+function sydneyClock(NOW) {
+  const H = 3600e3, D = 864e5;
+  const parts = (ms, o) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'Australia/Sydney', hourCycle: 'h23', ...o }).formatToParts(new Date(ms)).map(p => [p.type, p.value]));
+  const offset = ms => { const p = parts(ms, { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' }); return Date.UTC(+p.year, p.month - 1, +p.day, +p.hour, +p.minute) - Math.floor(ms / 60e3) * 60e3; };
+  const DOW = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const sydneyAt = (days, hh, mm) => {
+    const p = parts(NOW + days * D, { year: 'numeric', month: 'numeric', day: 'numeric' });
+    const wall = Date.UTC(+p.year, p.month - 1, +p.day, hh, mm);
+    return wall - offset(wall - 10 * H);
+  };
+  // the next time it is weekday `dow` at hh:mm in Sydney, skipping one that has already finished
+  return (dow, hh, mm, mins) => {
+    const days = (dow - DOW[parts(NOW, { weekday: 'short' }).weekday] + 7) % 7;
+    let t = sydneyAt(days, hh, mm);
+    if (t + mins * 60e3 <= NOW) t = sydneyAt(days + 7, hh, mm);
+    return new Date(t).toISOString();
+  };
+}
+
+// Official websites, each checked to load and name the place (2026-10). Example local places across
+// Greater Sydney, generated from OpenStreetMap data and passed through the public-space check, with
+// a couple of example events in each area. Example events and the original ones get local times.
+async function seedRegion(db) {
+  const NOW = Date.now(), D = 864e5, H = 3600e3, iso = ms => new Date(ms).toISOString(), when = sydneyClock(NOW);
+  const S = [], add = (sql, ...args) => S.push(db.prepare(sql).bind(...args));
+  Object.entries({
+    np0: 'https://www.cityofsydney.nsw.gov.au/parks/sydney-park', np1: 'https://www.centennialparklands.com.au/',
+    np2: 'https://www.botanicgardens.org.au/royal-botanic-garden-sydney', np3: 'https://www.barangaroo.com/',
+    np4: 'https://www.cityofsydney.nsw.gov.au/parks/rushcutters-bay-park', np5: 'https://www.sydneyolympicpark.com.au/parks-and-playgrounds/bicentennial-park',
+    np6: 'https://www.cityofparramatta.nsw.gov.au/community/parks-and-public-spaces/find-a-park-or-reseve/lake-parramatta-reserve',
+    np7: 'https://www.greatersydneyparklands.nsw.gov.au/bungarribee-park', np8: 'https://www.greatersydneyparklands.nsw.gov.au/explore/nurragingy-reserve',
+    np11: 'https://sutherlandshire.nsw.gov.au/play-and-explore/the-outdoors/parks-and-reserves/all-parks-reserves/gunnamatta-park-cronulla',
+    np12: 'https://cityofsydneyleisure.com.au/visit/cook-phillip-park-pool', np13: 'https://wylies.com.au/',
+    np14: 'https://www.sydneyolympicpark.nsw.gov.au/aquatic-centre', np15: 'https://www.ryde.nsw.gov.au/RALC',
+    np16: 'https://www.cityofparramatta.nsw.gov.au/the-pac/home', np17: 'https://www.whitlamleisurecentre.com.au/',
+    np18: 'https://leisure.sutherlandshire.nsw.gov.au/locations/sutherland-leisure-centre', np19: 'https://www.blacktownaquaticandsports.com.au/Home',
+    np20: 'https://www.sl.nsw.gov.au/', np21: 'https://www.cityofsydney.nsw.gov.au/libraries/customs-house-library',
+    np22: 'https://cityofparramatta.nsw.gov.au/phive/library', np23: 'https://penrithcity.nsw.gov.au/community-library/library',
+    np24: 'https://www.casulapowerhouse.com/', np25: 'https://www.bankstownartscentre.com.au/',
+    v1: 'https://cityofsydneyleisure.com.au/visit/victoria-park-pool', v2: 'https://cityofsydneyleisure.com.au/visit/ian-thorpe-aquatic-centre',
+    v4: 'https://www.cityofsydney.nsw.gov.au/landmarks/glebe-town-hall', v6: 'https://www.cityofsydney.nsw.gov.au/parks/victoria-park',
+    v8: 'https://www.hornsby.nsw.gov.au/halc', v10: 'https://www.greatersydneyparklands.nsw.gov.au/parramatta-park'
+  }).forEach(([id, url]) => add('UPDATE venues SET website = ? WHERE id = ? AND website IS NULL', url, id));
+
+  REGION_PEOPLE.forEach(([id, name, age, gender, bio]) => add('INSERT OR IGNORE INTO profiles (id, display_name, age_bracket, gender, bio, is_sample, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)', id, name, age, gender, bio, iso(NOW - 40 * D)));
+  const ocean = /rock ?pool|beach pool|memorial pool/i;
+  const about = (kind, name) => kind === 'park' ? 'Local park. Free to use.'
+    : kind === 'pool' ? (ocean.test(name) ? 'Ocean pool. Free to use. Check the surf conditions before you swim.' : 'Public pool. Check hours and entry prices with the centre.')
+    : kind === 'library' ? 'Public library. Free entry.' : 'Community venue. Check hours and hire with the venue.';
+  REGION_PLACES.forEach(([id, name, kind, lat, lng, area, free], i) => {
+    const by = REGION_PEOPLE[i % REGION_PEOPLE.length][0];
+    add('INSERT OR IGNORE INTO venues (id, name, kind, lat, lng, address, description, website, access, created_by, manager_id, manager_verified, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, 0, ?)',
+      id, name, kind, lat, lng, 'Near ' + area, about(kind, name), '[]', by, iso(NOW - (8 + i % 20) * D));
+    if (free) add("INSERT OR IGNORE INTO venue_prices (id, venue_id, label, price, unit, note, created_by, updated_by, updated_at) VALUES (?, ?, 'Entry', 0, 'entry', 'Free to use', ?, ?, ?)", 'pr-' + id, id, by, by, iso(NOW - 3 * D));
+  });
+  REGION_EVENTS.forEach(e => {
+    add(`INSERT OR IGNORE INTO events (id, host_id, activity, category, title, notes, meeting_point, skill, cost, max_people, starts_at, duration_mins, gender_rule, age_brackets, noise_level, access, venue_id, lat, lng, place, is_sample, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, 'All levels', NULL, ?, ?, ?, 'everyone', NULL, ?, ?, ?, ?, ?, ?, 1, ?)`,
+      e.id, e.host, e.activity, e.category, e.title, e.notes, e.max, when(e.day, e.hh, e.mm, e.dur), e.dur, e.noise, JSON.stringify(e.access), e.venue, e.lat, e.lng, e.place, iso(NOW));
+    [e.host, ...e.people].forEach(u => add('INSERT OR IGNORE INTO participants (event_id, user_id, joined_at) VALUES (?, ?, ?)', e.id, u, iso(NOW - H)));
+  });
+
+  // the first examples were set a number of hours from launch; give them sensible local days and times
+  [['ex0', 0, 10, 0], ['ex1', 3, 14, 0], ['ex2', 6, 9, 0], ['ex3', 4, 17, 30], ['ex4', 2, 7, 30], ['ex5', 6, 8, 0], ['ex6', 5, 16, 0],
+   ['ex7', 2, 11, 0], ['ex8', 3, 6, 30], ['ex9', 0, 6, 30], ['gs0', 1, 9, 30], ['gs1', 4, 18, 0], ['gs2', 6, 10, 0], ['gs3', 2, 18, 0],
+   ['gs4', 0, 10, 30], ['gs5', 5, 6, 30], ['gs6', 3, 18, 0], ['gs7', 0, 7, 0]]
+    .forEach(([id, dow, hh, mm]) => S.push(db.prepare('UPDATE events SET starts_at = ? WHERE id = ? AND is_sample = 1')
+      .bind(when(dow, hh, mm, 180), id)));
+  add("INSERT OR REPLACE INTO meta (key, value) VALUES ('seeded_region', ?)", iso(NOW));
+  add("UPDATE meta SET value = CAST(value AS INTEGER) + 1 WHERE key = 'version'");
+  await batched(db, S);
 }
 
 // Notable public places across Greater Sydney (added 2026-10). Coordinates come from OpenStreetMap

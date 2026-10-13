@@ -1096,10 +1096,13 @@ function visibleEvents() {
     if (S.tab === 'mine') return startMs(a) - startMs(b);
     const la = statusOf(a, now) === 'live', lb = statusOf(b, now) === 'live';
     if (la !== lb) return la ? -1 : 1;
-    if (S.userPos) return a._dist - b._dist;
-    return startMs(a) - startMs(b);
+    // nearby first (soonest first), then everything further out by distance
+    const na = a._dist <= NEAR_KM, nb = b._dist <= NEAR_KM;
+    if (na !== nb) return na ? -1 : 1;
+    return na ? startMs(a) - startMs(b) : a._dist - b._dist;
   });
 }
+const NEAR_KM = 5;
 const pendingIn = () => [...S.friends.values()].filter(f => f.status === 'pending' && !f.mine);
 
 /* =====================================================================
@@ -1178,9 +1181,12 @@ function renderSheet(list) {
     $('#countSub').textContent = list.filter(isHost).length + ' hosting · ' + list.filter(e => !isHost(e)).length + ' going';
     $('#catChips').innerHTML = '';
   } else {
-    const live = list.filter(e => statusOf(e, now) === 'live').length;
-    $('#countTitle').textContent = list.length ? `${list.length} thing${list.length === 1 ? '' : 's'} on near you` : 'Find your people';
-    $('#countSub').textContent = live ? `${live} happening now` : 'Sydney';
+    // count what is within NEAR_KM of you (or of the map centre until we know where you are), not the whole city
+    const near = list.filter(e => e._dist <= NEAR_KM), far = list.length - near.length;
+    const live = near.filter(e => statusOf(e, now) === 'live').length;
+    const where = S.userPos ? 'near you' : 'in this area';
+    $('#countTitle').textContent = near.length ? `${near.length} thing${near.length === 1 ? '' : 's'} on ${where}` : list.length ? `Nothing on ${where} yet` : 'Find your people';
+    $('#countSub').textContent = [live ? `${live} happening now` : `Within ${NEAR_KM} km`, far ? `${far} more further away` : ''].filter(Boolean).join(' · ');
     $('#catChips').innerHTML =
       `<button class="chip ${fc ? 'on' : ''}" data-filters>${fc ? '' : I.filter}Filters${fc ? ` <span class="badge-n">${fc}</span>` : ''}</button>` +
       `<button class="chip ${S.cats.size ? '' : 'on'}" data-cat="all" aria-pressed="${!S.cats.size}">All</button>` +
