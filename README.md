@@ -2,7 +2,7 @@
 
 Drop a pin and bring your community together: knitting circles, chess in the park, dance, pickup games and more around Sydney.
 
-Live at https://pinnit.tpotter098.workers.dev
+Live at **https://pinnit.pages.dev** (the old https://pinnit.tpotter098.workers.dev address forwards there and carries saved accounts across).
 
 ## How it fits together
 
@@ -16,6 +16,7 @@ worker/            the server (a Cloudflare Worker)
   index.js         every /api route
   setup.js         database tables + the example events, created on first run
 wrangler.jsonc     Cloudflare config: site + Worker + D1 database
+pages/             the pinnit.pages.dev project: forwards every request to the Worker (service binding)
 supabase/          older Supabase version of the backend, kept for reference (not used)
 ```
 
