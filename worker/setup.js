@@ -65,6 +65,53 @@ async function setup(db) {
   if (!seeded) await seed(db);
   const greater = await db.prepare("SELECT value FROM meta WHERE key = 'seeded_greater'").first();
   if (!greater) await seedGreaterSydney(db);
+  const places = await db.prepare("SELECT value FROM meta WHERE key = 'seeded_places'").first();
+  if (!places) await seedNotablePlaces(db);
+}
+
+// Notable public places across Greater Sydney (added 2026-10). Coordinates come from OpenStreetMap
+// via the map tiles and each passed the public-space check. No prices are invented: parks and
+// libraries are marked free; pools and arts centres are left for locals to add prices.
+async function seedNotablePlaces(db) {
+  const NOW = Date.now(), D = 864e5, iso = ms => new Date(ms).toISOString();
+  const places = [
+    ['np0', 'Sydney Park', 'park', -33.910951, 151.184444, 'St Peters', 'Big open park with wetlands and walking paths. Free to use.', 'p1', 1],
+    ['np1', 'Centennial Park', 'park', -33.897933, 151.234773, 'Centennial Park', 'Large parklands with cycling and walking loops. Free to use.', 'p2', 1],
+    ['np2', 'Royal Botanic Garden', 'park', -33.862768, 151.215713, 'Sydney', 'Botanic garden on the harbour. Free to visit.', 'p3', 1],
+    ['np3', 'Barangaroo Reserve', 'park', -33.858491, 151.201165, 'Barangaroo', 'Harbourside headland park. Free to use.', 'p4', 1],
+    ['np4', 'Rushcutters Bay Park', 'park', -33.875591, 151.229671, 'Rushcutters Bay', 'Harbourside park with open lawns. Free to use.', 'p5', 1],
+    ['np5', 'Bicentennial Park', 'park', -33.844181, 151.078196, 'Sydney Olympic Park', 'Parkland and wetlands at Sydney Olympic Park. Free to use.', 'p6', 1],
+    ['np6', 'Lake Parramatta Reserve', 'park', -33.793294, 151.008952, 'North Parramatta', 'Bush reserve around Lake Parramatta. Free to use.', 'p7', 1],
+    ['np7', 'Bungarribee Park', 'park', -33.778982, 150.87173, 'Doonside', 'Part of the Western Sydney Parklands. Free to use.', 'p8', 1],
+    ['np8', 'Nurragingy Reserve', 'park', -33.760998, 150.858926, 'Doonside', 'Large reserve with picnic areas. Free to use.', 'p9', 1],
+    ['np9', 'Manly Dam', 'park', -33.782781, 151.253886, 'Allambie Heights', 'Bushland reserve around a freshwater lake. Free to use.', 'p10', 1],
+    ['np10', 'Jamison Park', 'park', -33.766024, 150.691411, 'Penrith', 'Sports park in Penrith. Free to use.', 'p11', 1],
+    ['np11', 'Gunnamatta Park', 'park', -34.059113, 151.149833, 'Cronulla', 'Bayside park in Cronulla. Free to use.', 'p1', 1],
+    ['np12', 'Cook + Phillip Park Pool', 'pool', -33.873204, 151.213106, 'Sydney', 'Indoor public pool in the city. Check hours and entry prices with the centre.', 'p2', 0],
+    ['np13', "Wylie's Baths", 'pool', -33.925677, 151.259417, 'Coogee', 'Historic ocean baths on the Coogee cliffs. Check entry with the baths.', 'p3', 0],
+    ['np14', 'Sydney Olympic Park Aquatic Centre', 'pool', -33.850294, 151.067162, 'Sydney Olympic Park', 'Olympic venue with public pools. Check hours and entry prices with the centre.', 'p4', 0],
+    ['np15', 'Ryde Aquatic Leisure Centre', 'pool', -33.821603, 151.119186, 'Ryde', 'Public pools and leisure centre. Check hours and entry prices with the centre.', 'p5', 0],
+    ['np16', 'Parramatta Aquatic Centre', 'pool', -33.814837, 150.995091, 'Parramatta', 'Public pools and leisure centre. Check hours and entry prices with the centre.', 'p6', 0],
+    ['np17', 'Whitlam Leisure Centre', 'pool', -33.92545, 150.914828, 'Liverpool', 'Public pools and leisure centre. Check hours and entry prices with the centre.', 'p7', 0],
+    ['np18', 'Sutherland Leisure Centre', 'pool', -34.038249, 151.055934, 'Sutherland', 'Public pools and leisure centre. Check hours and entry prices with the centre.', 'p8', 0],
+    ['np19', 'Blacktown Aquatic Centre', 'pool', -33.771794, 150.917929, 'Blacktown', 'Public pools. Check hours and entry prices with the centre.', 'p9', 0],
+    ['np20', 'State Library of NSW', 'library', -33.866879, 151.212838, 'Sydney', 'Free to visit, with reading rooms and exhibitions.', 'p10', 1],
+    ['np21', 'Customs House Library', 'library', -33.862135, 151.210928, 'Circular Quay', 'Public library at Circular Quay. Free entry.', 'p11', 1],
+    ['np22', 'PHIVE', 'library', -33.815938, 151.004269, 'Parramatta', "Parramatta's civic and library building. Free entry.", 'p1', 1],
+    ['np23', 'Penrith City Library', 'library', -33.750419, 150.689989, 'Penrith', 'Public library. Free entry.', 'p2', 1],
+    ['np24', 'Casula Powerhouse Arts Centre', 'studio', -33.949421, 150.912843, 'Casula', 'Arts centre by the Georges River.', 'p3', 0],
+    ['np25', 'Bankstown Arts Centre', 'studio', -33.918764, 151.03115, 'Bankstown', 'Community arts centre.', 'p4', 0]
+  ];
+  const S = [];
+  places.forEach(([id, name, kind, lat, lng, suburb, desc, by, free], i) => {
+    S.push(db.prepare('INSERT OR IGNORE INTO venues (id, name, kind, lat, lng, address, description, website, access, created_by, manager_id, manager_verified, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, 0, ?)')
+      .bind(id, name, kind, lat, lng, suburb, desc, '[]', by, iso(NOW - (10 + i) * D)));
+    if (free) S.push(db.prepare("INSERT OR IGNORE INTO venue_prices (id, venue_id, label, price, unit, note, created_by, updated_by, updated_at) VALUES (?, ?, 'Entry', 0, 'entry', 'Free to use', ?, ?, ?)")
+      .bind('pr-' + id, id, by, by, iso(NOW - 3 * D)));
+  });
+  S.push(db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('seeded_places', ?)").bind(iso(NOW)));
+  S.push(db.prepare("UPDATE meta SET value = CAST(value AS INTEGER) + 1 WHERE key = 'version'"));
+  await db.batch(S);
 }
 
 // Example events beyond the city (added 2026-10). Every spot was checked against the same
