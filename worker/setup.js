@@ -49,10 +49,14 @@ async function migrate(db) {
   await db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS profiles_recovery_idx ON profiles(recovery_hash)').run();
 }
 
-let ready = null;
-export function ensureReady(db) {
-  if (!ready) ready = setup(db).catch(e => { ready = null; throw e; });
-  return ready;
+// Each request runs setup itself until one finishes. A Worker must never await a promise started by
+// another request: if that request is cancelled, its database calls die and everyone waiting hangs.
+// Setup is safe to run twice at once (CREATE IF NOT EXISTS, INSERT OR IGNORE with fixed ids).
+let ready = false;
+export async function ensureReady(db) {
+  if (ready) return;
+  await setup(db);
+  ready = true;
 }
 async function setup(db) {
   await db.batch(SCHEMA.split(';').map(s => s.trim()).filter(Boolean).map(s => db.prepare(s)));

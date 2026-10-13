@@ -9,8 +9,8 @@
 <meta property="og:title" content="Pinnit · Drop a pin. Find your people.">
 <meta property="og:description" content="Knitting circles, chess in the park, dance, pickup games and walk and talks around Sydney.">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://pinnit.tpotter098.workers.dev/">
-<meta property="og:image" content="https://pinnit.tpotter098.workers.dev/brand/pinnit-link-preview-1200x630.png">
+<meta property="og:url" content="https://pinnit.pages.dev/">
+<meta property="og:image" content="https://pinnit.pages.dev/brand/pinnit-link-preview-1200x630.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
@@ -21,6 +21,27 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Pinnit">
 <script>
+/* Pinnit lives at pinnit.pages.dev. Visitors to the old workers.dev address are sent there, and their
+   saved account (and an under-18 lock) comes with them in the link's #fragment, which never reaches a
+   server; the new page stores it and wipes the fragment straight away. */
+(function () {
+  try {
+    if (location.hostname.endsWith('.workers.dev')) {
+      const t = localStorage.getItem('pinnit_token'), u = localStorage.getItem('pinnit_uid');
+      const carry = new URLSearchParams();
+      if (t && u) { carry.set('t', t); carry.set('u', u); }
+      if (localStorage.getItem('pinnit_age_block')) carry.set('b', '1');
+      location.replace('https://pinnit.pages.dev' + location.pathname + location.search + (String(carry) ? '#move&' + carry : ''));
+    } else if (location.hash.startsWith('#move&')) {
+      const p = new URLSearchParams(location.hash.slice(6));
+      if (/^[0-9a-f]{64}$/.test(p.get('t') || '') && p.get('u') && !localStorage.getItem('pinnit_token')) {
+        localStorage.setItem('pinnit_token', p.get('t')); localStorage.setItem('pinnit_uid', p.get('u'));
+      }
+      if (p.get('b')) localStorage.setItem('pinnit_age_block', 'true');
+      history.replaceState(null, '', location.pathname + location.search);
+    }
+  } catch {}
+})();
 /* comfort settings applied before first paint */
 try { (JSON.parse(localStorage.getItem('pinnit_comfort')) || []).forEach(c => document.documentElement.classList.add(c)); } catch {}
 </script>

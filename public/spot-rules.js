@@ -181,22 +181,21 @@ async function bytes(r) {
   if (b[0] === 0x1f && b[1] === 0x8b) b = new Uint8Array(await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
   return b;
 }
+// Only finished tiles are cached, never in-flight promises: on the server a request must not wait on
+// a fetch another request started (if that request is cancelled, the fetch dies and the waiter hangs).
 export async function loadTile(t, fetchFn = fetch) {
   const key = `${t.z}/${t.x}/${t.y}`;
   if (cache.has(key)) return cache.get(key);
-  const p = (async () => {
-    if (!tileUrl || Date.now() - tileUrlAt > 6 * 3600e3) {
-      const j = await (await fetchFn(TILEJSON)).json();
-      tileUrl = j.tiles[0]; tileUrlAt = Date.now();
-    }
-    const r = await fetchFn(tileUrl.replace('{z}', t.z).replace('{x}', t.x).replace('{y}', t.y));
-    if (!r.ok) throw new Error('Map tile ' + r.status);
-    return readTile(await bytes(r));
-  })();
-  cache.set(key, p);
+  if (!tileUrl || Date.now() - tileUrlAt > 6 * 3600e3) {
+    const j = await (await fetchFn(TILEJSON, { signal: AbortSignal.timeout(10000) })).json();
+    tileUrl = j.tiles[0]; tileUrlAt = Date.now();
+  }
+  const r = await fetchFn(tileUrl.replace('{z}', t.z).replace('{x}', t.x).replace('{y}', t.y), { signal: AbortSignal.timeout(10000) });
+  if (!r.ok) throw new Error('Map tile ' + r.status);
+  const layers = readTile(await bytes(r));
+  cache.set(key, layers);
   if (cache.size > 60) cache.delete(cache.keys().next().value);
-  p.catch(() => cache.delete(key));
-  return p;
+  return layers;
 }
 // the whole check: throws if map data can't be loaded (callers must not guess)
 export async function checkSpot(lat, lng, fetchFn) {
