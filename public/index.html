@@ -1243,7 +1243,8 @@ function renderSheet(list) {
     const where = S.userPos ? 'near you' : 'in this area';
     if (S.query) $('#countTitle').textContent = `${list.length} result${list.length === 1 ? '' : 's'} for “${S.query}”`;
     else $('#countTitle').textContent = near.length ? `${near.length} thing${near.length === 1 ? '' : 's'} on ${where}` : list.length ? `Nothing on ${where} yet` : 'Find your people';
-    $('#countSub').textContent = [live ? `${live} happening now` : `Within ${NEAR_KM} km`, far ? `${far} more further away` : ''].filter(Boolean).join(' · ');
+    $('#countSub').textContent = S.query ? 'Across Sydney · tap ✕ on the search to see everything'
+      : [live ? `${live} happening now` : `Within ${NEAR_KM} km`, far ? `${far} more further away` : ''].filter(Boolean).join(' · ');
     $('#catChips').innerHTML =
       (S.query ? `<button class="chip q-chip" data-clearq aria-label="Clear search ${esc(S.query)}">🔍 ${esc(S.query)} ✕</button>` : '') +
       `<button class="chip ${fc ? 'on' : ''}" data-filters>${fc ? '' : I.filter}Filters${fc ? ` <span class="badge-n">${fc}</span>` : ''}</button>` +
