@@ -4,7 +4,7 @@
    sees the same pins, chats and reviews.
    Each phone gets its own account on first open; the token lives in
    localStorage. There is no realtime connection, so changes arrive by
-   polling: /api/pulse every 15 s, chat every 4 s while it's open.
+   polling: /api/pulse every 10 s, chat every 4 s while it's open.
    ===================================================================== */
 (function () {
   const TOKEN = 'pinnit_token', UID = 'pinnit_uid';
@@ -77,6 +77,7 @@
     },
     async createEvent(row) { return req('POST', '/events', row); },
     async deleteEvent(id, onlyThisDate) { return req('DELETE', '/events/' + encodeURIComponent(id) + (onlyThisDate ? '?only=1' : '')); },
+    async markRead(id) { await req('POST', `/events/${encodeURIComponent(id)}/read`, {}); },
     async stopRepeat(id) { await req('POST', `/events/${encodeURIComponent(id)}/stop-repeat`, {}); },
     async setRegular(id, on) { await req('POST', `/events/${encodeURIComponent(id)}/regular`, { on }); },
     async join(id, ref) { await req('POST', `/events/${encodeURIComponent(id)}/join`, ref ? { ref } : {}); },
@@ -138,13 +139,17 @@
           since = p.at;
           p.joins.forEach(j => cb('participants', { eventType: 'INSERT', new: j }));
           p.friendships.forEach(f => cb('friendships', { eventType: f.status === 'accepted' ? 'UPDATE' : 'INSERT', new: f }));
+          cb('unread', { list: p.unread || [], messages: p.messages || [] });
           if (version != null && p.version !== version && !p.joins.length && !p.friendships.length) cb('events', { eventType: 'UPDATE', new: {} });
           version = p.version;
         } catch (e) { console.warn('pulse', e.message); }
       };
       tick();
-      const t = setInterval(tick, 15000);
-      return () => { stopped = true; clearInterval(t); };
+      const t = setInterval(tick, 10000);
+      // check straight away when the phone comes back to the app
+      const wake = () => { if (!document.hidden) tick(); };
+      document.addEventListener('visibilitychange', wake);
+      return () => { stopped = true; clearInterval(t); document.removeEventListener('visibilitychange', wake); };
     },
     subscribeEvent(id, cb) {
       let last = '', stopped = false, n = 0;

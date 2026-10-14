@@ -38,6 +38,7 @@ CREATE INDEX IF NOT EXISTS invites_inviter_idx ON invites(inviter_id);
 CREATE TABLE IF NOT EXISTS cancellations (user_id TEXT NOT NULL, event_id TEXT NOT NULL, hours_ahead REAL NOT NULL, at TEXT NOT NULL, PRIMARY KEY (user_id, event_id));
 CREATE TABLE IF NOT EXISTS moderation_log (id TEXT PRIMARY KEY, user_id TEXT, kind TEXT NOT NULL, reason TEXT NOT NULL, excerpt TEXT, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS restore_attempts_idx ON restore_attempts(ip, at);
+CREATE TABLE IF NOT EXISTS chat_reads (event_id TEXT NOT NULL, user_id TEXT NOT NULL, read_at TEXT NOT NULL, PRIMARY KEY (event_id, user_id));
 `;
 
 // Columns added after launch. CREATE TABLE IF NOT EXISTS won't add them to an existing table,

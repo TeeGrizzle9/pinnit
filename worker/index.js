@@ -200,6 +200,7 @@ route('DELETE', '/api/me', async ({ db, me }) => {
   await write(db, [
     db.prepare(`DELETE FROM participants WHERE user_id = ? OR event_id IN (${mine})`).bind(me, me),
     db.prepare(`DELETE FROM messages WHERE user_id = ? OR event_id IN (${mine})`).bind(me, me),
+    db.prepare(`DELETE FROM chat_reads WHERE user_id = ? OR event_id IN (${mine})`).bind(me, me),
     db.prepare(`DELETE FROM checkins WHERE user_id = ? OR event_id IN (${mine})`).bind(me, me),
     db.prepare('DELETE FROM series_regulars WHERE user_id = ? OR series_id IN (SELECT series_id FROM events WHERE host_id = ?)').bind(me, me),
     db.prepare('DELETE FROM events WHERE host_id = ?').bind(me),
@@ -450,13 +451,35 @@ route('POST', '/api/events/:id/messages', async ctx => {
   await write(db, [db.prepare('INSERT INTO messages (id, event_id, user_id, body, created_at) VALUES (?, ?, ?, ?, ?)').bind(m.id, m.event_id, m.user_id, m.body, m.created_at)]);
   return m;
 });
+// opening a chat marks it read, which clears its count on every device
+route('POST', '/api/events/:id/read', async ({ db, me, params }) => {
+  if (await isParticipant(db, params.id, me)) await db.prepare('INSERT OR REPLACE INTO chat_reads (event_id, user_id, read_at) VALUES (?, ?, ?)').bind(params.id, me, now()).run();
+  return { ok: true };
+});
+// Live location ("checkins" table): people who opt in share where they are with the rest of the group,
+// but only within LIVE_KM of the pin and from 15 minutes before the start to 15 minutes after the end.
+// Positions not refreshed for LIVE_STALE are hidden, so a closed phone doesn't leave a ghost on the map.
+const LIVE_KM = 0.5, LIVE_SLACK = 0.1, LIVE_WINDOW = 15 * 60e3, LIVE_STALE = 10 * 60e3;
+const inLiveWindow = e => { const s = Date.parse(e.starts_at), t = Date.now(); return t >= s - LIVE_WINDOW && t <= s + e.duration_mins * 60e3 + LIVE_WINDOW; };
+const metresFrom = (e, lat, lng) => Math.hypot((lat - e.lat) * 111320, (lng - e.lng) * 111320 * Math.cos(e.lat * Math.PI / 180));
 route('GET', '/api/events/:id/checkins', async ({ db, me, params }) => {
   if (!await isParticipant(db, params.id, me)) return [];
-  return (await db.prepare('SELECT * FROM checkins WHERE event_id = ?').bind(params.id).all()).results;
+  const e = await getEvent(db, params.id);
+  if (!inLiveWindow(e)) return [];
+  return (await db.prepare('SELECT * FROM checkins WHERE event_id = ? AND updated_at > ? AND user_id NOT IN (SELECT blocked_id FROM blocks WHERE user_id = ?)')
+    .bind(params.id, new Date(Date.now() - LIVE_STALE).toISOString(), me).all()).results;
 });
 route('PUT', '/api/events/:id/checkin', async ({ db, me, params, body }) => {
   if (!await isParticipant(db, params.id, me)) fail(403, 'Join the event first');
-  await db.prepare('INSERT OR REPLACE INTO checkins (event_id, user_id, lat, lng, updated_at) VALUES (?, ?, ?, ?, ?)').bind(params.id, me, num(body.lat, -90, 90, 'location'), num(body.lng, -180, 180, 'location'), now()).run();
+  const e = await getEvent(db, params.id);
+  if (!inLiveWindow(e)) fail(400, 'Live location can be shared from 15 minutes before the event until 15 minutes after it');
+  const lat = num(body.lat, -90, 90, 'location'), lng = num(body.lng, -180, 180, 'location');
+  // a little slack over the 500 m the phone uses, for GPS wobble
+  if (metresFrom(e, lat, lng) > (LIVE_KM + LIVE_SLACK) * 1000) {
+    await db.prepare('DELETE FROM checkins WHERE event_id = ? AND user_id = ?').bind(e.id, me).run();
+    fail(400, 'Live location is only shared when you are within 500 m of the event');
+  }
+  await db.prepare('INSERT OR REPLACE INTO checkins (event_id, user_id, lat, lng, updated_at) VALUES (?, ?, ?, ?, ?)').bind(e.id, me, lat, lng, now()).run();
   return { ok: true };
 });
 route('DELETE', '/api/events/:id/checkin', async ({ db, me, params }) => {
@@ -678,7 +701,26 @@ route('GET', '/api/pulse', async ({ db, me, url }) => {
     db.prepare('SELECT pa.event_id, pa.user_id, NOT EXISTS (SELECT 1 FROM participants x WHERE x.user_id = pa.user_id AND x.joined_at < pa.joined_at) AS first_timer FROM participants pa JOIN events e ON e.id = pa.event_id WHERE e.host_id = ? AND pa.user_id != ? AND pa.joined_at > ?').bind(me, me, since),
     db.prepare('SELECT * FROM friendships WHERE (user_a = ? OR user_b = ?) AND updated_at > ?').bind(me, me, since)
   ]);
-  return { version: Number(v.results[0]?.value || 0), at: now(), joins: joins.results, friendships: fr.results };
+  const live = "julianday(e.starts_at) + e.duration_mins / 1440.0 > julianday('now')";
+  const blocked = 'SELECT blocked_id FROM blocks WHERE user_id = ?';
+  // chats you're in: messages from others since you last opened that chat (or since you joined)
+  const [unread, fresh] = await db.batch([
+    db.prepare(`SELECT m.event_id, COUNT(*) AS n FROM messages m
+      JOIN participants pa ON pa.event_id = m.event_id AND pa.user_id = ?
+      JOIN events e ON e.id = m.event_id
+      LEFT JOIN chat_reads r ON r.event_id = m.event_id AND r.user_id = ?
+      WHERE m.user_id != ? AND m.user_id NOT IN (${blocked}) AND m.created_at > COALESCE(r.read_at, pa.joined_at) AND ${live}
+      GROUP BY m.event_id`).bind(me, me, me, me),
+    // the newest of those since the phone last looked, for the drop-down notification
+    db.prepare(`SELECT m.id, m.event_id, m.user_id, m.body, m.created_at, p.display_name FROM messages m
+      JOIN participants pa ON pa.event_id = m.event_id AND pa.user_id = ?
+      JOIN events e ON e.id = m.event_id
+      JOIN profiles p ON p.id = m.user_id
+      LEFT JOIN chat_reads r ON r.event_id = m.event_id AND r.user_id = ?
+      WHERE m.user_id != ? AND m.user_id NOT IN (${blocked}) AND m.created_at > ? AND m.created_at > COALESCE(r.read_at, pa.joined_at) AND ${live}
+      ORDER BY m.created_at DESC LIMIT 10`).bind(me, me, me, me, since)
+  ]);
+  return { version: Number(v.results[0]?.value || 0), at: now(), joins: joins.results, friendships: fr.results, unread: unread.results, messages: fresh.results };
 });
 
 /* ---------- entry point ---------- */
