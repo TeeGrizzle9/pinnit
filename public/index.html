@@ -1903,7 +1903,7 @@ function startTour() {
 }
 function showTourStep(i) {
   clearTimeout(TOUR.timer);
-  TOUR.i = i;
+  TOUR.i = i; TOUR.shownAt = Date.now();
   const last = i >= TOUR_STEPS.length, card = $('#tourCard'), spot = $('#tourSpot');
   const bars = `<div class="tour-bars" aria-hidden="true">${TOUR_STEPS.map((_, k) => `<i class="${k < i ? 'done' : k === i ? 'now' : ''}" style="--d:${TOUR_MS}ms"></i>`).join('')}</div>`;
   if (last) {
@@ -1944,6 +1944,8 @@ $('#tour').addEventListener('click', e => {
   // tap the dimmed screen to move on (taps on the card itself are for reading, or holding to pause)
   if (!b) { if (!e.target.closest('#tourCard') && TOUR.i < TOUR_STEPS.length) showTourStep(TOUR.i + 1); return; }
   const a = b.dataset.tour;
+  // a quick double tap on Next shouldn't also pick an option on the final card
+  if (TOUR.i >= TOUR_STEPS.length && a !== 'done' && Date.now() - TOUR.shownAt < 700) return;
   if (a === 'next') showTourStep(TOUR.i + 1);
   else if (a === 'back') showTourStep(Math.max(0, TOUR.i - 1));
   else endTour(a === 'skip' || a === 'done' ? null : a);
