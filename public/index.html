@@ -1850,7 +1850,7 @@ VIEWS.profile = () => {
       return `<div class="prow"><button class="pmain" data-person="${esc(p.id)}">${avatar(p)}<div class="pi"><strong>${esc(p.display_name)}</strong><span>${esc(p.last_event)} · ${esc(dayLabel(+new Date(p.last_played)))}</span></div></button><div class="acts">${act}</div></div>`;
     }).join('') : '<p class="muted-s">People from events you finish will show up here.</p>'}
 
-    <button class="toggle" data-act="replayTour" style="margin-top:22px"><div><strong>🎬 Replay the quick tour</strong><span>30 seconds on finding, joining and hosting games.</span></div><span aria-hidden="true">›</span></button>
+    <button class="toggle" data-act="replayTour" style="margin-top:22px"><div><strong>🎬 Replay the quick tour</strong><span>About 30 seconds on finding, joining and hosting games.</span></div><span aria-hidden="true">›</span></button>
     ${canInstall() ? `<button class="toggle" data-act="install" style="margin-top:10px"><div><strong>📲 Install Pinnit</strong><span>Add it to your home screen, like an app. Free.</span></div><span aria-hidden="true">›</span></button>` : ''}
 
     <div class="sec-t">Privacy</div>
@@ -1867,10 +1867,10 @@ VIEWS.profile = () => {
     <p class="fine" style="text-align:center">Removes your profile, events, chats, reviews and badges from Pinnit for good. Your account lives on this phone, so clearing the browser's data also signs you out.</p>`;
 };
 /* =====================================================================
-   QUICK TOUR: shown once to new users. Six short steps spotlight the real screen (about 27 s,
-   moving on by itself), then a final card with somewhere to start. Tap Next or Back, or Skip.
+   QUICK TOUR: shown once to new users. Six short steps spotlight the real screen (5.5 s each,
+   moving on by itself, about 33 s), then a final card with somewhere to start. Tap Next or Back, or Skip.
    ===================================================================== */
-const TOUR_MS = 4500;
+const TOUR_MS = 5500;
 const TOUR_STEPS = [
   { e: '👋', t: () => `Welcome to Pinnit${S.me ? ', ' + esc(first(S.me.display_name)) : ''}!`, p: 'Every pin on the map is something happening around Sydney: sport, dance, art, games, walks and more. Here’s how it works.', at: null },
   { e: '🙌', t: () => 'Join a game', p: 'Tap any pin or card to see what’s on, who’s going and the vibe. Tap <b>Join</b> to grab a spot. The meeting point and group chat unlock once you’re in.', at: () => tourPin() || $('#sheet') },
