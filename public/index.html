@@ -472,6 +472,10 @@ textarea.field{height:92px;padding:12px 14px;resize:none;line-height:1.4}
 .age-in input::-webkit-outer-spin-button,.age-in input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .age-in input:focus{border-color:var(--green);background:#fff}
 .age-in span{font-size:18px;font-weight:700;color:var(--muted)}
+.dob{display:grid;grid-template-columns:1.3fr 1fr;gap:12px;margin:22px 0 8px}
+.dob label{display:block;font-size:13px;font-weight:700;color:var(--muted);margin:0 0 6px 4px}
+.dob select{width:100%;height:60px;border-radius:14px;border:2px solid var(--line);background:var(--mint);font:inherit;font-size:19px;font-weight:800;color:var(--ink);padding:0 14px;outline:0;appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2310302A' stroke-width='3' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center}
+.dob select:focus{border-color:var(--green);background-color:#fff}
 .stop-ic{font-size:54px;line-height:1;margin:8px 0 14px}
 .tips{display:flex;flex-direction:column;gap:10px;margin:6px 0 4px}
 .tip{display:flex;gap:12px;align-items:flex-start;background:var(--mint);border-radius:14px;padding:12px 14px}
@@ -1526,7 +1530,13 @@ function renderAuth() {
 
 /* ---------- first run on the local backend: welcome, age, profile, safety ---------- */
 const AGE_BLOCK_KEY = 'pinnit_age_block';
-const ob = { step: 'welcome', age: '', name: '', gender: '', pledge: false, err: '' };
+const ob = { step: 'welcome', age: '', birthMonth: '', birthYear: '', name: '', gender: '', pledge: false, err: '' };
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+// age in whole years from month and year of birth; a birthday in the current month counts as reached
+function ageFrom(month, year) {
+  const now = new Date();
+  return now.getFullYear() - year - (now.getMonth() + 1 < month ? 1 : 0);
+}
 function bracketFor(age) {
   const tops = [25, 35, 45, 55, 65, 75];
   const i = tops.findIndex(t => age < t);
@@ -1560,10 +1570,14 @@ function renderOnboarding() {
       <p class="hint" style="text-align:center;margin-top:14px">No code? Your account lives on the phone you made it on. Open Pinnit there, then Profile › Save my account.</p>
       <div class="switch-auth"><button data-ob="toWelcome">Back</button></div>`;
   } else if (ob.step === 'age') {
-    html = `${steps(1)}<h1>How old are you?</h1>
-      <p class="lead">Pinnit brings people together in person, so it's for adults 18 and over. Others only ever see an age range, never your exact age.</p>
+    const thisYear = new Date().getFullYear();
+    html = `${steps(1)}<h1>When were you born?</h1>
+      <p class="lead">Pinnit brings people together in person, so it's for adults 18 and over. Others only ever see an age range, never your birthday or exact age.</p>
       <form id="obForm" novalidate>
-        <div class="age-in"><input id="obAge" type="number" inputmode="numeric" min="1" max="120" placeholder="--" aria-label="Your age in years" value="${esc(ob.age)}" autofocus><span>years old</span></div>
+        <div class="dob">
+          <div><label for="obMonth">Month</label><select id="obMonth"><option value="">Month</option>${MONTHS.map((m, i) => `<option value="${i + 1}" ${+ob.birthMonth === i + 1 ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
+          <div><label for="obYear">Year</label><select id="obYear"><option value="">Year</option>${Array.from({ length: 101 }, (_, i) => thisYear - i).map(y => `<option value="${y}" ${+ob.birthYear === y ? 'selected' : ''}>${y}</option>`).join('')}</select></div>
+        </div>
         ${err}
         <div style="margin-top:22px"><button class="btn primary" type="submit">Continue</button></div>
       </form>
@@ -1572,7 +1586,8 @@ function renderOnboarding() {
     html = `<div class="stop-ic">🌱</div><h1>Pinnit is 18+ for now</h1>
       <p class="lead">Thanks for being honest. Pinnit helps strangers meet up in person, so it's only open to adults while we build the right protections for younger people.</p>
       <div class="help-box"><b>Still keen to get involved?</b>Your local council's youth services, school, uni or TAFE clubs run free sport, art and music groups.</div>
-      <div class="help-box"><b>Need someone to talk to?</b>Kids Helpline is free and open 24/7 for anyone up to 25: <a href="tel:1800551800">1800 55 1800</a></div>`;
+      <div class="help-box"><b>Need someone to talk to?</b>Kids Helpline is free and open 24/7 for anyone up to 25: <a href="tel:1800551800">1800 55 1800</a></div>
+      <div style="margin-top:20px"><button class="btn secondary" data-ob="retryAge">Entered the wrong date? Try again</button></div>`;
   } else if (ob.step === 'profile') {
     html = `${steps(2)}<h1>What should people call you?</h1>
       <p class="lead">Just a first name is perfect. People see your first name, photo and age range, never your exact age.</p>
@@ -1601,7 +1616,7 @@ function renderOnboarding() {
       <div class="switch-auth"><button data-ob="toProfile">Back</button></div>`;
   }
   $('#authCard').innerHTML = html;
-  const f = $('#obAge') || $('#obName'); if (f && !('ontouchstart' in window)) f.focus();
+  const f = $('#obMonth') || $('#obName'); if (f && !('ontouchstart' in window)) f.focus();
 }
 async function onboardingClick(e) {
   const b = e.target.closest('[data-ob]'), g = e.target.closest('[data-obgender]');
@@ -1613,6 +1628,7 @@ async function onboardingClick(e) {
   switch (b.dataset.ob) {
     case 'toWelcome': return go('welcome');
     case 'toAge': return go('age');
+    case 'retryAge': store.del(AGE_BLOCK_KEY); ob.birthMonth = ''; ob.birthYear = ''; ob.age = ''; return go('age');
     case 'toRestore': return go('restore');
     case 'toProfile': return go('profile');
     case 'pledge': ob.pledge = !ob.pledge; return renderOnboarding();
@@ -1639,9 +1655,11 @@ function onboardingSubmit(e) {
     return;
   }
   if (ob.step === 'age') {
-    const v = $('#obAge').value.trim(), age = Number(v);
-    ob.age = v;
-    if (!v || !Number.isInteger(age) || age < 1 || age > 120) { ob.err = 'Enter your age in years, like 24'; return renderOnboarding(); }
+    ob.birthMonth = $('#obMonth').value; ob.birthYear = $('#obYear').value;
+    if (!ob.birthMonth || !ob.birthYear) { ob.err = 'Choose the month and year you were born'; return renderOnboarding(); }
+    const age = ageFrom(+ob.birthMonth, +ob.birthYear);
+    if (age < 0) { ob.err = "That date hasn't happened yet. Check the month and year"; return renderOnboarding(); }
+    ob.age = String(age);
     if (age < 18) { store.set(AGE_BLOCK_KEY, true); ob.step = 'under'; return renderOnboarding(); }
     ob.step = 'profile'; return renderOnboarding();
   }
