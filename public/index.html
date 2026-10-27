@@ -534,10 +534,7 @@ textarea.field{height:92px;padding:12px 14px;resize:none;line-height:1.4}
 .tour-card{position:fixed;width:min(340px,calc(100vw - 32px));background:#fff;border-radius:20px;padding:16px 16px 14px;box-shadow:0 14px 40px rgba(0,0,0,.3);transition:top .45s cubic-bezier(.2,.8,.2,1),left .45s cubic-bezier(.2,.8,.2,1)}
 .tour-bars{display:flex;gap:4px;margin-bottom:12px}
 .tour-bars i{flex:1;height:4px;border-radius:9px;background:var(--soft2,#e3e9e6);overflow:hidden;position:relative}
-.tour-bars i.done::after,.tour-bars i.now::after{content:"";position:absolute;inset:0;background:var(--green);transform-origin:left}
-.tour-bars i.now::after{animation:tourBar var(--d) linear forwards}
-.tour.paused .tour-bars i.now::after{animation-play-state:paused}
-@keyframes tourBar{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+.tour-bars i.done::after,.tour-bars i.now::after{content:"";position:absolute;inset:0;background:var(--green)}
 .tour-card .tour-e{font-size:30px;line-height:1;margin-bottom:6px}
 .tour-card h3{margin:0 0 4px;font-size:19px;font-weight:900;color:var(--ink)}
 .tour-card p{margin:0;font-size:15px;line-height:1.45;color:var(--muted)}
@@ -1868,7 +1865,7 @@ VIEWS.profile = () => {
       return `<div class="prow"><button class="pmain" data-person="${esc(p.id)}">${avatar(p)}<div class="pi"><strong>${esc(p.display_name)}</strong><span>${esc(p.last_event)} · ${esc(dayLabel(+new Date(p.last_played)))}</span></div></button><div class="acts">${act}</div></div>`;
     }).join('') : '<p class="muted-s">People from events you finish will show up here.</p>'}
 
-    <button class="toggle" data-act="replayTour" style="margin-top:22px"><div><strong>🎬 Replay the quick tour</strong><span>About 30 seconds on finding, joining and hosting games.</span></div><span aria-hidden="true">›</span></button>
+    <button class="toggle" data-act="replayTour" style="margin-top:22px"><div><strong>🎬 Replay the quick tour</strong><span>A quick look at finding, joining and hosting games.</span></div><span aria-hidden="true">›</span></button>
     ${canInstall() ? `<button class="toggle" data-act="install" style="margin-top:10px"><div><strong>📲 Install Pinnit</strong><span>Add it to your home screen, like an app. Free.</span></div><span aria-hidden="true">›</span></button>` : ''}
 
     <div class="sec-t">Privacy</div>
@@ -1885,10 +1882,9 @@ VIEWS.profile = () => {
     <p class="fine" style="text-align:center">Removes your profile, events, chats, reviews and badges from Pinnit for good. Your account lives on this phone, so clearing the browser's data also signs you out.</p>`;
 };
 /* =====================================================================
-   QUICK TOUR: shown once to new users. Six short steps spotlight the real screen (5.5 s each,
-   moving on by itself, about 33 s), then a final card with somewhere to start. Tap Next or Back, or Skip.
+   QUICK TOUR: shown once to new users. Six short steps spotlight the real screen, then a final card
+   with somewhere to start. It moves at the reader's pace: Next and Back, or Skip.
    ===================================================================== */
-const TOUR_MS = 5500;
 const TOUR_STEPS = [
   { e: '👋', t: () => `Welcome to Pinnit${S.me ? ', ' + esc(first(S.me.display_name)) : ''}!`, p: 'Every pin on the map is something happening around Sydney: sport, dance, art, games, walks and more. Here’s how it works.', at: null },
   { e: '🙌', t: () => 'Join a game', p: 'Tap any pin or card to see what’s on, who’s going and the vibe. Tap <b>Join</b> to grab a spot. The meeting point and group chat unlock once you’re in.', at: () => tourPin() || $('#sheet') },
@@ -1897,7 +1893,7 @@ const TOUR_STEPS = [
   { e: '💬', t: () => 'Your events and chats', p: 'Everything you’re hosting or going to lives in <b>My events</b>. A red number means new messages from your group.', at: () => $('#tabs [data-tab="mine"]') },
   { e: '⭐', t: () => 'Your profile', p: 'Your points, level and badges, friends, recovery code and settings like live location. Tap your initials any time.', at: () => $('#profileBtn') }
 ];
-const TOUR = { on: false, i: 0, timer: null, paused: false };
+const TOUR = { on: false, i: 0 };
 // the event pin closest to the middle of the screen, if one is visible
 function tourPin() {
   const cx = innerWidth / 2, cy = innerHeight * 0.35;
@@ -1915,18 +1911,18 @@ function startTour() {
   $('#installBar').classList.add('hidden'); $('#results').classList.add('hidden');
   if (S.tab !== 'explore') { S.tab = 'explore'; renderAll(); }
   setSheet('peek');
-  Object.assign(TOUR, { on: true, i: 0, paused: false });
-  $('#tour').classList.remove('hidden', 'paused');
+  Object.assign(TOUR, { on: true, i: 0 });
+  $('#tour').classList.remove('hidden');
   setTimeout(() => showTourStep(0), 350);
 }
 function showTourStep(i) {
-  clearTimeout(TOUR.timer);
   TOUR.i = i; TOUR.shownAt = Date.now();
   const last = i >= TOUR_STEPS.length, card = $('#tourCard'), spot = $('#tourSpot');
-  const bars = `<div class="tour-bars" aria-hidden="true">${TOUR_STEPS.map((_, k) => `<i class="${k < i ? 'done' : k === i ? 'now' : ''}" style="--d:${TOUR_MS}ms"></i>`).join('')}</div>`;
+  const bars = `<div class="tour-bars" aria-hidden="true">${TOUR_STEPS.map((_, k) => `<i class="${k < i ? 'done' : k === i ? 'now' : ''}"></i>`).join('')}</div>`;
   if (last) {
     card.innerHTML = `${bars}<div class="tour-e">🎉</div><h3>You're all set</h3><p>Where do you want to start?</p>
-      <div class="tour-end"><button class="btn primary" data-tour="find">Find a game near me</button><button class="btn secondary" data-tour="host">Host a game</button><button class="text-link" data-tour="done">I'll look around</button></div>`;
+      <div class="tour-end"><button class="btn primary" data-tour="find">Find a game near me</button><button class="btn secondary" data-tour="host">Host a game</button><button class="text-link" data-tour="done">I'll look around</button></div>
+      <div class="tour-nav"><button class="btn secondary" data-tour="back">Back</button></div>`;
   } else {
     const st = TOUR_STEPS[i];
     card.innerHTML = `${bars}<div class="tour-e" aria-hidden="true">${st.e}</div><h3>${st.t()}</h3><p>${st.p}</p>
@@ -1948,10 +1944,9 @@ function showTourStep(i) {
     Object.assign(card.style, { top: Math.max(12, (innerHeight - ch) / 2 - 40) + 'px', left: (innerWidth - cw) / 2 + 'px' });
   }
   card.querySelector(last ? '[data-tour="find"]' : '[data-tour="next"]').focus({ preventScroll: true });
-  if (!last && !TOUR.paused) TOUR.timer = setTimeout(() => showTourStep(i + 1), TOUR_MS);
 }
 function endTour(then) {
-  clearTimeout(TOUR.timer); TOUR.on = false;
+  TOUR.on = false;
   store.set('pinnit_tour_done', true);
   $('#tour').classList.add('hidden');
   if (then === 'find') { S.tab = 'explore'; renderAll(); setSheet('full'); locate(true); toast('Tap any event to see the details and join'); }
@@ -1959,8 +1954,7 @@ function endTour(then) {
 }
 $('#tour').addEventListener('click', e => {
   const b = e.target.closest('[data-tour]');
-  // tap the dimmed screen to move on (taps on the card itself are for reading, or holding to pause)
-  if (!b) { if (!e.target.closest('#tourCard') && TOUR.i < TOUR_STEPS.length) showTourStep(TOUR.i + 1); return; }
+  if (!b) return;   // only the buttons move the tour on
   const a = b.dataset.tour;
   // a quick double tap on Next shouldn't also pick an option on the final card
   if (TOUR.i >= TOUR_STEPS.length && a !== 'done' && Date.now() - TOUR.shownAt < 700) return;
@@ -1968,10 +1962,6 @@ $('#tour').addEventListener('click', e => {
   else if (a === 'back') showTourStep(Math.max(0, TOUR.i - 1));
   else endTour(a === 'skip' || a === 'done' ? null : a);
 });
-// holding a finger on the card pauses it, for slower readers
-$('#tourCard').addEventListener('pointerdown', () => { if (TOUR.i >= TOUR_STEPS.length) return; TOUR.paused = true; clearTimeout(TOUR.timer); $('#tour').classList.add('paused'); });
-const resumeTour = () => { if (!TOUR.paused) return; TOUR.paused = false; $('#tour').classList.remove('paused'); };
-['pointerup', 'pointercancel', 'pointerleave'].forEach(t => $('#tourCard').addEventListener(t, resumeTour));
 document.addEventListener('keydown', e => {
   if (!TOUR.on) return;
   if (e.key === 'Escape') endTour();
